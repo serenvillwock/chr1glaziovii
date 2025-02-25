@@ -1,0 +1,294 @@
+##### PRACTICE SESSION 1 #####
+bcftools view practice.vcf --include GT="ref" --output-type v --output filtertest.vcf
+(This gave the message: Comparison between samples is not supported, sorry!)
+
+bcftools view practice.vcf --include INFO/DP>10 --output-type v --output filtertest.vcf
+bcftools view practice.vcf --include FORMAT/DP>10 --output-type v --output filtertest.vcf
+(These are all giving empty files with no sites - have to put expression in single quotes!)
+
+bcftools view practice.vcf --include 'QUAL>100' --output-type v --output filtertest.vcf
+(this worked)
+
+bcftools view practice.vcf --include 'GT="ref"' --output-type v --output filtertest.vcf
+
+bcftools view practice.vcf --include 'GT[@escrefs.txt]="ref"' --output-type v --output filtertest.vcf
+
+bcftools view practice.vcf --include 'GT[@glaziovii.txt]="alt"' --output-type v --output filtertest.vcf
+
+
+bcftools view practice.vcf --include 'GT[@glaziovii.txt]="alt" && GT[@escrefs.txt]="ref"' --output-type v --output filtertest.vcf
+bcftools view practice.vcf --include 'GT[@glaziovii.txt]="alt" & GT[@escrefs.txt]="ref"' --output-type v --output filtertest.vcf
+(These both returned no sites)
+
+
+##### NOTES #####
+This code isn't correct but this is the logic I want to convey in the expression:
+GT[@escrefs.txt]="ref" & GT[@glaziovii.txt]="alt" & GT[@hetrefs.txt]="het"
+
+or GT[@glaziovii.txt]="mis"
+and 
+
+all GT="ref" & QUAL>threshold
+
+
+single & means conditions are satisfied within the same sample
+double && includes sites where both conditions are met but not necessarily in the same sample
+same with single | and double ||
+
+"alt" means homozygous or heterozygous alternate
+
+should type="snp" ?
+################
+
+
+##### PRACTICE SESSION 2 #####
+using new vcf file
+
+bcftools view goodpractice.vcf --include 'GT[@glaziovii.txt]="alt" & GT[@escrefs.txt]="ref"' --output-type v --output filtertest.vcf --no-header
+(empty file)
+
+bcftools view goodpractice.vcf --include 'GT[@glaziovii.txt]="alt"' --output-type v --output filtertest.vcf 
+(kept a handful of sites)
+
+bcftools view longerpractice.vcf --include 'GT[@glaziovii.txt]="alt"' --output-type v --output filtertest.vcf
+(this seems to show sites where some glazioviis are "alt" but not all)
+
+bcftools view longerpractice.vcf --include 'GT[@glaziovii.txt]="ref"' --output-type v --output filtertest.vcf
+(this keeps more sites than above)
+
+
+##### PRACTICE SESSION 3 #####
+
+bcftools view longerpractice.vcf --include 'GT[@glaziovii.txt]="alt" | 'GT[@glaziovii.txt]="mis"  --output-type v --output filtertest.vcf
+(error: the tag "mis" is not defined in the VCF header)
+
+bcftools view longerpractice.vcf --include 'GT[@glaziovii.txt]="alt" | GT[@glaziovii.txt]="mis"'  --output-type v --output filtertest.vcf
+
+bcftools view longerpractice.vcf --include 'GT[@glaziovii.txt]="alt"' --output-type v --output filtertest.vcf
+(I think this is filtering for any sites where any glaziovii genotypes have alternate alleles; not sites where all glaziovii genotypes have alternate alleles. Need to exclude )
+
+
+Conceptual:
+'GT[@glaziovii.txt]="alt" | 'GT[@glaziovii.txt]="mis" & GT[@hetrefs.txt]="het" | GT[@hetrefs.txt]="mis"'
+type="snp"
+
+
+
+bcftools view longerpractice.vcf --exclude 'GT[@glaziovii.txt]="ref"' --output-type v --output filtertest.vcf
+(this works; outputs only sites where glaz are missing or alt but not ref)
+
+bcftools view longerpractice.vcf --exclude 'GT[@glaziovii.txt]=GT[@escrefs.txt]' --output-type v --output filtertest.vcf
+(error message: Comparison between samples is not supported, sorry)
+
+
+
+##### PRACTICE SESSION 3.1 #####
+
+ 
+vcf-contrast   --novel-sites   +GLA59008-1,GLA59008,Mglaziovii,MExMGlaziovii,MGLAZIOVII   -I30555,I930134,I996016   longerpractice.vcf   |   less -S
+(This outputs a vcf only with the sites where there are novel variants in shortlist of Glazes that aren't present in the shortlist of esculentas.)
+
+vcf-contrast   --novel-sites   +GT[@glaziovii.txt]   -I30555,I930134,I996016   longerpractice.vcf   |   less -S
+(This works to reference the lists)
+
+vcf-contrast   --novel-sites   +GT[@glaziovii.txt]   -GT[@escrefs.txt]   longerpractice.vcf   |   less -S
+(I think this works though no sites are outputted)
+
+
+TRY IN BIG VCF:
+vcf-contrast   --novel-sites   +GT[@glaziovii.txt]   -GT[@bigescrefs.txt]   bigpractice.vcf   |   less -S
+(no sites outputted)
+
+
+bcftools view bigpractice.vcf --exclude 'GT[@glaziovii.txt]="ref"' --stdout | vcf-contrast   --novel-sites   +GT[@glaziovii.txt]   -GT[@bigescrefs.txt]   bigpractice.vcf   |   less -S
+(this file was empty but had the right list of accessions in the columns)
+
+
+vcf-contrast   --novel-sites   +GT[@glaziovii.txt]   -AM56025,TMEB419,Albert   bigpractice.vcf   |   less -S
+(no sites outputted)
+
+
+vcf-contrast   --novel-sites   +GLA59008-1,Mglaziovii,MGLAZIOVII   -AM56025,TMEB419,Albert   bigpractice.vcf   |   less -S
+(this outputs a bunch of sites, and tells you how many are glaz samples have novel alleles)
+
+vcf-contrast   --novel-sites   +GLA59008-1,Mglaziovii,MGLAZIOVII   -GT[@bigescrefs.txt]   bigpractice.vcf   |   less -S
+(no sites)
+
+vcf-contrast   --novel-sites   +GT[@glaziovii.txt]   -AM56025,TMEB419,Albert   bigpractice.vcf   |   less -S
+(no sites)
+
+vcf-contrast   --novel-sites   +GT[@testglazrefs.txt]   -AM56025,TMEB419,Albert   bigpractice.vcf   |   less -S
+(no sites)
+
+vcf-contrast   --novel-sites   +MAN00401,Mglaziovii,MGLAZIOVII,MglazioviiR,MglazioviiS,GLA59008,GLA59008-1   -AM56025,TMEB419,Albert   bigpractice.vcf   |   less -S
+(outputs sites, but a lot of Argument "." isn't numeric in addition (+))
+
+
+
+vcf-contrast   --novel-sites   +MAN00401,Mglaziovii,MGLAZIOVII,MglazioviiR,MglazioviiS,GLA59008,GLA59008-1   -AM56025,TMEB419,Albert   bigpractice.vcf   |   vcf-query   -f   '%CHROM\t%POS\t%INFO/NOVELTY\t%INFO/NOVELAL\t%INFO/NOVELGT[\t%SAMPLE %GTR %PL]\n' | less -S
+(table view but not that much more helpful than above)
+
+
+
+#### Notes: ######
+First need to filter for all sites that are the same in all of the esculentas (could simplify to same as reference; but if reference has the introgression then this won't work. UPDATE: reference genotype, AM560-2, does not have the introgression in this region according to HapMapII. The reference is included in the pure esculenta panel.)
+Then need to filter for sites that the hets are heterozygous.
+
+Alternative: filter for all of the uplifted IDM sites first
+Then filter for hets het.
+
+Heterozygous references = "het" could be heterozygous ref/alt1 or alt1/alt2 or alt2/alt3 or alt1/alt3
+
+What I want are: alleles that are present in glazioviis but absent from esculentas
+Need to filter for alt alleles not represented in esc. panel.
+Something like: --include GT[@glaziovii.txt] != GT[@escrefs.txt]
+or --exclude GT[@glaziovii.txt] = GT[@escrefs.txt]
+
+
+Let's try next:
+vcf-contrast 
+http://manpages.ubuntu.com/manpages/trusty/man1/vcf-contrast.1.html
+
+
+Options:
+   +<list>                             List of samples where unique variant is expected
+   -<list>                             List of background samples
+   -d, --min-DP <int>                  Minimum depth across all -<list> samples
+   -f, --apply-filters                 Skip sites with FILTER column different from PASS or "."
+   -n, --novel-sites                   Print only records with novel genotypes
+   -h, -?, --help                      This help message.
+
+
+Goal: I guess it would be easiest for a KASP marker to have fixed sites. So escs="ref" & hets="het" & glazs="alt"
+#################
+
+
+
+##### PRACTICE SESSION 3.2 #######
+bcftools view bigpractice.vcf --include 'GT[@bigescrefs.txt]="ref"'  --output-type v --output filtertest.vcf
+(lots of sites)
+
+bcftools view longerpractice.vcf --include 'GT[@escrefs.txt]="ref"'  --output-type v --output filtertest.vcf
+(seems to be keeping all of the first sites)
+
+esc refs are:
+TMEB117
+I996016
+I30555
+TMEB693
+I930134
+
+example sites kept:
+6, 9, 16, 246, 315, 318, 327, 346, 350
+
+bcftools view longerpractice.vcf --exclude 'GT[@escrefs.txt]="alt"'  --output-type v --output filtertest.vcf
+(seems to be the same sites as above)
+
+*made a fake file longerpractice_edited.vcf, so that a 0/0 esculenta is now a 1/1 at the first position, site 6, for genotype #5. Trying again:
+bcftools view longerpractice_edited.vcf --include 'GT[@escrefs.txt]="ref"'  --output-type v --output filtertest.vcf
+(site still included)
+
+bcftools view longerpractice_edited.vcf --exclude 'GT[@escrefs.txt]="alt"'  --output-type v --output filtertest.vcf
+(site now excluded! yay!) 
+## Conclusion: need to use exclude instead of include
+
+
+bcftools view longerpractice.vcf --exclude 'GT[@escrefs.txt]="alt" && GT[@glaziovii.txt]="ref"'  --output-type v --output filtertest.vcf
+(this is still keeping 0/0 glaz sites, but it should be excluding them)
+
+
+bcftools view longerpractice.vcf --exclude 'GT[@escrefs.txt]="alt" | GT[@escrefs.txt]="het" && GT[@glaziovii.txt]="ref" | GT[@glaziovii.txt]="het"'  --output-type v --output filtertest.vcf
+(seems the same)
+
+bcftools view longerpractice.vcf --exclude 'GT[@glaziovii.txt]="mis"'  --output-type v --output filtertest.vcf
+(expect this to exclude site 16 where there is 1 ./. in a glaz. No sites passed the filter. I guess that makes sense if one of the glaz genotypes is mostly missing.)
+
+
+
+
+### PRACTICE SESSION 4 ####
+
+bcftools view longerpractice.vcf --exclude 'GT[@escrefs.txt]="alt" & GT[@glaziovii.txt]="ref"'  --output-type v --output filtertest.vcf
+(still has glaziovii homozygous reference)
+
+bcftools view longerpractice.vcf --exclude 'GT[@glaziovii.txt]="ref"'  --output-type v --output filtertest.vcf
+(this successfully excludes sites with glaziovii = reference but allows missing sites)
+
+bcftools view longerpractice.vcf --exclude 'GT[@glaziovii.txt]="ref"'  --output-type v --output filtertest.vcf
+then:
+bcftools view filtertest.vcf --exclude 'GT[@escrefs.txt]="alt"'  --output-type v --output filtertest2.vcf
+(successive filtering seems to work)
+
+bcftools view longerpractice.vcf --exclude 'GT[@glaziovii.txt]="ref" | GT[@escrefs.txt]="alt"'  --output-type v --output filtertest.vcf
+(I think this does the same thing as above.
+
+
+Writing for the big file:
+bcftools view introgress1.v7.variants.vcf --exclude 'GT[@glaziovii.txt]="ref" | GT[@bigescrefs.txt]="alt" | GT[@bighetrefs.txt]="hom"'  --output-type v --output introgress1.v7.variants.filtertest.vcf
+
+bcftools view cassava_hm3_largerpanel_Chr1.recode.vcf --exclude 'GT[@glaziovii.txt]="ref" | GT[@bigescrefs.txt]="alt" | GT[@bighetrefs.txt]="hom"'  --output-type v --output cassava_hm3_largerpanel_Chr1.recode.vcf.filtertest.vcf
+
+
+
+### PRACTICE SESSION 5, 1/5/21 ####
+count and list sites in the different files using bcftools query
+
+filter for conserved sites:
+bcftools view introgress1.v7.allcalls.vcf --include 'GT[@glaziovii.txt]="ref" & GT[@bigescrefs.txt]="ref" & GT[@bighetrefs.txt]="ref" | GT="mis" '  --output-type v --output introgress1.v7.allcalls.conservedsites.vcf
+
+(will need to add missingness/quality filter to this later)
+this output all the same sites as before and did not actually filter as intended.
+
+
+Try using site type to filter:
+bcftools view introgress1.v7.allcalls.vcf --include 'TYPE="ref"'  --output-type v --output introgress1.v7.allcalls.conservedsites.vcf
+
+this looks good! didn't leave in any variant sites that I can see. Need to filter for quality and missing ness next.
+
+
+
+
+
+
+
+
+
+
+
+#### Meeting with Jeff 1/12/21 ####
+
+Look at allele depth just in glaziovii samples:
+
+
+bcftools view  --samples-file glaziovii.txt  --output-type v  introgress1.v7.variants.filtertest.vcf  |  bcftools query -f '%POS %INFO/DP %INFO/AD [ %AD] \n' | less
+
+bcftools view  --samples-file glaziovii.txt  --output-type v  introgress1.v7.variants.filtertest.vcf  |  bcftools query -f '%POS %INFO/AD [ %DP] \n' | less
+(output to excel, can sum DP to determine which samples to exclude or where to set quality cutoffs)
+
+bcftools view  --samples-file glaziovii.txt  --output-type v  introgress1.v7.variants.filtertest.vcf  |  bcftools query -f '%POS\t%INFO/AD[\t%DP]\n' > glazDP.txt
+
+
+
+
+#### Checking filters 1/20/21 ####
+
+Redoing filter because some heterozygous genotypes remained in the homozygous classes:
+
+bcftools view introgress1.v7.variants.vcf --exclude 'GT[@glaziovii.txt]="ref" | GT[@glaziovii.txt]="het" | GT[@bigescrefs.txt]="alt" | GT[@bigescrefs.txt]="het" |GT[@bighetrefs.txt]="hom"'  --output-type v --output introgress1.v7.variants.filtered2.vcf
+
+
+
+## For Chr 4:
+
+bcftools view intrgr.chr4.variants.vcf --exclude 'GT[@glz_panel4.txt]="ref" | GT[@glz_panel4.txt]="het" | GT[@esc_panel4_sed.txt]="alt" | GT[@esc_panel4_sed.txt]="het" | GT[@het_panel4_sed.txt]="hom"'  --output-type v --output intrgr.chr4.variants.filtered.vcf
+
+
+#bcftools view intrgr.chr4.vcf --include 'TYPE="ref"'  --output-type v --output intrgr.chr4.nonvariant.vcf
+#may not need this because I can just do this filter in R from the all sites file
+
+
+# export candidate stats in 100bp region around candidates:
+bcftools view --regions-file candidates4regions_list.txt --output-type v  --output-file intrgr.chr4.401cand.region.vcf intrgr.chr4.vcf
+
+
+

@@ -1,0 +1,63 @@
+Plate 6 well 12C mystery "1161817"
+likely between 931 and 946
+
+Not these already marked:
+21.GS.C6.SN.Student2.IB-plant930-TMS21F2048P0003
+21.GS.C6.SN.Student2.IB-plant932-TMS21F2048P0005
+21.GS.C6.SN.Student2.IB-plant935-TMS21F2049P0001
+21.GS.C6.SN.Student2.IB-plant938-TMS21F2049P0004
+939
+
+
+21.GS.C6.SN.Student2.IB-plant941-TMS21F2049P0007
+21.GS.C6.SN.Student2.IB-plant942-TMS21F2050P0001
+21.GS.C6.SN.Student2.IB-plant945-TMS21F2051P0001
+21.GS.C6.SN.Student2.IB-plant947-TMS21F2052P0002
+949
+
+
+
+Plate 7 well 12E mystery "12283710"
+between 1191 and 1193; check that it should be 1192
+
+Plate 8 well 03D mystery "14473803"
+between 1234 and 1238
+
+Plate 8 well 05B mystery "18032086" &
+well 05C mystery "14789359" 
+both between 1262 and 1268
+
+Plate 8 well 07F mystery "11532651"
+between 1311 and 1315
+
+Plate 8 well 09A mystery "2303291"
+between 1333 and 1343
+
+
+Plate 9 well 07A "11812364"
+between 1468 and 1472
+
+Plate 9 well 08D "1318911"
+between 1491 and 1494
+
+Plate 9 well 09A "8955625"
+between 1502 and 1506
+
+
+Also to check that these correspond and re-tag with full name:
+TMS21F1975P0118	1	117B
+TMS21F1975P0119	2	117C
+TMS21F1975P0120	3	117D
+TMS21F1975P0121	4	117E
+TMS21F1975P0122	5	117F
+TMS21F1975P0123	6	117G
+TMS21F1975P0124	7	117H
+TMS21F1975P0125	8	117I
+TMS21F1975P0126	9	117J
+TMS21F1975P0127	10	117K
+TMS21F1975P0128	11	117L
+
+
+
+
+

@@ -1,0 +1,533 @@
+---
+title: "Determining the introgression status of IITA 2020 clones"
+author: "Seren Villwock"
+date: "10/14/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(stringr)
+library(tidyr)
+library(reshape2)
+library(tidyverse)
+library(binr)
+```
+
+
+# Objective: 
+Calculate the *M. glaziovii* allele dosage at each **IDM** in the SNP datasets of clones at IITA Ubiaja in 2020 (list from Prasad) and in the HapMapII long-read WGS clones (list from Cinta). Determine the average glaziovii allele dosage across the introgression region on chromosome 1 to identify which clones are heterozygous or homozygous esculenta/glaziovii. Graph the glaziovii allele dosages in the introgression regions to identify individuals with interesting/unique recombination break points.
+
+# Data:
+
+Ubiaja list of accession names:
+```{r}
+setwd("~/Desktop/Research/Glaziovii_introgression/Ubiaja_Trials_2020")
+UB.UYT28 <- read.csv("20.GS.C3.UYT.28.UB.csv")
+UB.PYT <- read.csv("20.GS.C4.PYT.80.SETA&SETB.CB.UB.csv")
+UB.UYT30 <- read.csv("20.GS.C1.C2.C3.UYT.30.UB.csv")
+UB.AYT40 <- read.csv("20.GS.C4B.AYT.40.UB.csv")
+UB.AYT42 <- read.csv("20.GS.C4B.AYT.42.UB.csv")
+UB.all <- plyr::rbind.fill(UB.UYT28, UB.PYT, UB.UYT30, UB.AYT40, UB.AYT42)
+UBnames <- as.character(unique(UB.all$accession_name))
+
+#write.csv(UBnames,"~/Desktop/Research/Ubiaja_Trials/UBaccessionnames.csv", row.names = FALSE)
+```
+
+WGS long-read list of accession names:
+```{r, echo=FALSE}
+longnames <- read.csv("~/Desktop/Research/long-reads-list.csv")
+```
+
+Dosage matrix for IITA clones (genotype data): subset for Chr 1 and for accessions of interest:
+matrix is a list of 0, 1, 2 dosages with row names as accessions and column names as SNPs.
+
+ftp://ftp.cassavabase.org/marnin_datasets/NGC_BigData/DosageMatrix_RefPanelAndGSprogeny_ReadyForGP_73019.rds
+```{r}
+DosageMatrix <- readRDS("~/Desktop/Research/Glaziovii_introgression/Ubiaja_Trials_2020/DosageMatrix_RefPanelAndGSprogeny_ReadyForGP_73019.rds")
+
+# Subset for Chr 1
+#grepl("S1", names(DosageMatrix[1,]) )
+#DosMat1 <- DosageMatrix[grep("S1_", names(DosageMatrix[1,])) , ]
+#grep("S1_", names(DosageMatrix[1,]))
+# first 8307 observations:  
+DosMat1 <- DosageMatrix[,1:8307]
+```
+
+
+# Make list of names to subset - only needs to be run once
+```{r, eval=FALSE}
+# Subset for IITA & long-read accessions:
+DosMatnames <- gsub(":.*","", rownames(DosMat1)) #remove genotyping code
+DosMatnames1 <- gsub("_A.*","", DosMatnames) #remove DNA sample tag after _A
+UBnames1 <- gsub("IITA-TMS-","", UBnames) #remove prefix in UBnames IITA samples
+trueintsect <- grep(paste(UBnames1,collapse="|"), DosMatnames1, value=TRUE)
+#write.csv(trueintsect,"~/Desktop/Research/Ubiaja_Trials/trueintersect.csv", row.names = FALSE)
+
+
+# A better way to determine matches and mismatches
+lengthUB <- length(UBnames1)
+matchstore <- NA
+mismatch <- NA
+for (i in 1:lengthUB) {
+  maybematch <- grep(UBnames1[i], DosMatnames1)
+if(length(maybematch) == 0){mismatch[i] <- UBnames[i]} else {matchstore[i] <- UBnames[i]}
+}
+
+
+UBmatches <- as.vector(na.omit(matchstore))
+UBnotfound <- as.vector(na.omit(mismatch))
+#write.csv(UBmatches,"~/Desktop/Research/Ubiaja_Trials/UBmatches.csv", row.names = FALSE)
+#write.csv(UBnotfound,"~/Desktop/Research/Ubiaja_Trials/UBnotfound.csv", row.names = FALSE)
+
+```
+
+Possible alternative names:
+Is TMS15F1041P0003 = "UG14_1041" or "NR110411"?  
+(this accession is listed on cassavabase as having been genotyped)
+
+```{r}
+#clean up for unique values
+u_trueintsect <- read.csv("~/Desktop/Research/Glaziovii_introgression/Ubiaja_Trials_2020/unique_trueintersect.csv", header=FALSE)
+u_trueintsect <- as.vector(u_trueintsect$V1)
+
+#Add NASE14 which has long read data
+u_trueintsect[89] <- "NASE14"
+
+UBDosMat.names <- grep(paste(u_trueintsect,collapse="|"), rownames(DosMat1), value=TRUE)
+UBDosMat <- subset(DosMat1, rownames(DosMat1) %in% UBDosMat.names)
+#save(UBDosMat,file="UBDosMat.Rdata")
+
+
+
+
+
+```
+
+Try running this method with another dosage matrix, cross-check from VCF to intro. status pipeline:
+```{r}
+UBDoseMatsave <- UBDosMat
+#UBDosMat <- dose
+```
+
+
+
+
+
+IDM list: subset for Strict IDMs on Chr 1 only:
+#Note (12/13/20): to fix in pipeline: include both IDM types for Rabbi 2017
+```{r}
+allIDMs <- read.csv("~/Desktop/Research/IDM_list.csv")
+strictIDMs <- subset(allIDMs, IDMtype == "Strict")
+strictIDMs1 <- subset(strictIDMs, Chr == 1)
+
+strictIDMs1region <- subset(strictIDMs1, Pos > 24000000)
+# length(strictIDMs1region$SNP): 1732
+```
+
+
+
+Subset dosage matrix for IDMs:
+IDM search list
+```{r}
+#IDMlist <- as.vector(paste0(strictIDMs1$SNP, "_*"))
+#IDMcolslist <- grep(paste(IDMlist,collapse="|"), colnames(UBDosMat), value=TRUE)
+
+IDMposlist <- as.vector(strictIDMs1$Pos)
+IDMcolslist2 <- grep(paste(IDMposlist,collapse="|"), colnames(UBDosMat), value=TRUE)
+
+
+UBDosdf <- data.frame(UBDosMat)
+UBDosIDMs <- UBDosdf %>% select(any_of(IDMcolslist2))
+
+#save(UBDosIDMs,file="UBDosMat.Rdata")
+
+#shorten name
+genos <- UBDosIDMs
+
+```
+
+
+
+
+# Subset IDM list:
+```{r}
+IDMset <- strictIDMs1
+IDMset <- IDMset %>% select(SNP, Pos, GlazAllele, AltAllele)
+
+
+
+```
+
+
+
+
+# Generate new columns that contain SNP position, allele, dosage. 
+```{r}
+#UBDosMat
+genosmelt <- melt(as.matrix(genos))
+
+genosmeltS <- separate(genosmelt, Var2, into = c("Chr","Pos","Allele"), sep="_", remove = F, convert = TRUE)
+
+#saveRDS(genosmeltS, file = "~/Desktop/Research/genosmeltS.rds")
+```
+
+
+# Assign the alleles esculenta or glaz based on intersection with IDM list
+```{r, echo=FALSE}
+#IDMset is new name of IDM list
+#Re-subsetting to make sure only IDMs included to try to resolve NA issue (now redundant)
+genosmeltSIDM <- subset(genosmeltS, Pos %in% IDMset$Pos)
+
+UBIDMDos <- left_join(genosmeltSIDM, IDMset, by = c("Pos"))
+#saveRDS(UBIDMDos, file = "~/Desktop/Research/UBIDMDos.rds")
+
+UBIDMstat <- UBIDMDos %>%
+  mutate(Status = ifelse(UBIDMDos$Allele == UBIDMDos$GlazAllele, "Glaz", "Esc"))
+UBIDMstat$Status <- as.factor(UBIDMstat$Status)
+
+
+```
+
+
+
+
+
+# Make dosage column with dosage of Glaz alleles
+```{r}
+UBIDMstat2 <- UBIDMstat %>%
+  mutate(dosvalue = ifelse(UBIDMstat$Status == "Glaz", UBIDMstat$value,
+        ifelse(UBIDMstat$Status == "Esc" & UBIDMstat$value == 0,2, 
+      ifelse(UBIDMstat$Status == "Esc" & UBIDMstat$value == 2, 0,               ifelse(UBIDMstat$Status == "Esc" & UBIDMstat$value == 1, 1, NA)))))
+
+```
+
+
+
+# Summarize Status by calculating mean Glaz allele dosage
+```{r, echo=FALSE}
+UBstatussum <- aggregate(UBIDMstat2$dosvalue, by=list(accession=UBIDMstat2$Var1), FUN=mean, na.rm =TRUE)
+UBstatussum <- UBstatussum %>% rename(mean.glazdose = x) 
+UBstatussum <- UBstatussum %>% arrange(mean.glazdose)
+
+
+#write.csv(UBstatussum, file = "~/Desktop/Research/UBclones_intro_summary.csv")
+
+#Accession with highest mean glaz dosage:
+highestglaz <- UBstatussum[which.max(UBstatussum$mean.glazdose),]
+
+#Accession with lowest mean glaz dosage:
+lowestglaz <- UBstatussum[which.min(UBstatussum$mean.glazdose),]
+```
+
+Note: TMEB419 is listed with both a very high and a very low glaz status - possible mislabeling of a sample
+
+
+# Mean Glaz dose by windows
+Plan: make a new dataframe with windows of (on average) 5 IDMs
+The windows are evenly spaced and may have different numbers of IDMs in them
+```{r, echo=FALSE}
+UBDoseGlaz <- UBIDMstat2 %>% select(Accession=Var1, SNP=Var2, Pos, dosvalue)
+Posnum <- length(unique(UBDoseGlaz$Pos)) #change this to length(starts) for cross-validation with ancestry method
+
+
+# Format start and stop positions of windows
+UBDoseGlaz$window <- NA
+UBDoseGlaz$window <- cut(UBDoseGlaz$Pos, breaks=Posnum/5, dig.lab=8) #formats the numbers to 8 digits to avoid scientific notation; 
+#breaks was previously set to 267
+#the cut function assigns each marker to a window (one of 267 evenly spaced bins)
+
+
+
+DoseGlazag <- aggregate(UBDoseGlaz$dosvalue, by=list(UBDoseGlaz$Accession, UBDoseGlaz$window), FUN="mean", na.rm =TRUE)
+
+DoseGlazag <- DoseGlazag %>% rename(accession=Group.1, IDM.window=Group.2, mean.glazdose = x) 
+
+
+#saveRDS(DoseGlazag, "~/Desktop/Research/DoseGlazag.rds")
+#DoseGlazag <- readRDS("~/Desktop/Research/DoseGlazag.RDS")
+```
+
+
+
+
+# Make graphs!
+```{r}
+# Format start and stop
+DoseGlazag$start <- sub(",.*", "", DoseGlazag$IDM.window)
+DoseGlazag$start <- sub("\\s*\\(", "", DoseGlazag$start)
+
+DoseGlazag$stop <- sub(".*,", "", DoseGlazag$IDM.window)
+DoseGlazag$stop <- sub("\\s*\\]", "", DoseGlazag$stop)
+
+# Sum dosages
+totalglaz <- aggregate(mean.glazdose ~ accession, DoseGlazag, sum)
+names(totalglaz)[2] <- "totalMG"
+DoseGlazSum <- merge(DoseGlazag,totalglaz,by="accession")
+
+# Order by 'total dosage'
+DoseGlazsorted <- DoseGlazSum
+DoseGlazsorted <- DoseGlazsorted[order(DoseGlazsorted$totalMG),]
+DoseGlazsorted$accession <- factor(DoseGlazsorted$accession, levels = unique(DoseGlazsorted$accession))
+
+# Set dosages as factors
+DoseGlazsorted$DoseCat <- NA
+DoseGlazsorted <- DoseGlazsorted %>%
+  mutate(DoseCat = ifelse(DoseGlazsorted$mean.glazdose<0.25, 0,
+                  ifelse(DoseGlazsorted$mean.glazdose>=0.25 & DoseGlazsorted$mean.glazdose<0.75, 0.5,
+                ifelse(DoseGlazsorted$mean.glazdose>=0.75 & DoseGlazsorted$mean.glazdose<1.25, 1,
+              ifelse(DoseGlazsorted$mean.glazdose>=1.25 & DoseGlazsorted$mean.glazdose<1.6, 1.5,
+            ifelse(DoseGlazsorted$mean.glazdose>=1.6 & DoseGlazsorted$mean.glazdose<=2, 2, NA))))))
+
+DoseGlazsorted$DoseCat <- as.factor(DoseGlazsorted$DoseCat)
+DoseGlazsorted$start <- as.numeric(DoseGlazsorted$start)
+DoseGlazsorted$stop <- as.numeric(DoseGlazsorted$stop)
+
+
+#Checking the length of the windows: 5/24/21
+window.length <- (as.numeric(DoseGlazag$stop)-as.numeric(DoseGlazag$start))
+```
+
+
+```{r}
+tiff("UBclones_intro_status_mymethod.tiff", units="px", width=1000, height=1200, res=300)
+
+ggplot(data = DoseGlazsorted) +
+  geom_segment(aes(x = start, xend = stop, y = accession, yend = accession, color=DoseCat),
+               alpha=0.75, size=0.5) +
+  scale_y_discrete(name = "Clones at Ubiaja", labels=NULL) +
+  scale_x_continuous(name="Chromosome 1 Mbp", limits=c(21000000,35000000)) +
+  scale_color_manual(values=c("#FFFFFF", "#FFCC66", "#FF9900", "#33FFCC", "#0066FF")) +
+  labs(color = str_wrap("Average Glaziovii allele dosage", width=10)) +
+  theme(axis.ticks.y=element_blank(), plot.background = element_rect(fill="gray95"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill="gray80")) +
+  geom_vline(xintercept = 24060000, color="black", size=0.2, linetype="dashed") +
+  geom_vline(xintercept = 24150000, color="red", size=0.2, linetype="dashed")
+
+dev.off()
+
+
+
+
+
+
+```
+
+Remove repeats:
+```{r, eval=FALSE}
+#DoseGlazsorted_dedup <- separate(DoseGlazsorted, col=accession, sep=":", into=c("name","tag")) 
+
+
+#DoseGlazsorted_dedup2 <-  separate(DoseGlazsorted_dedup, col=name, sep="_", into="name2","tag2")
+#throws error: 'Error in if (remove) { : argument is not interpretable as logical'
+```
+
+
+# With accession names visible:
+```{r}
+
+#tiff("UBclones_intro_status_labeled_withrepeats.tiff", units="px", width=1500, height=2000, res=300)
+
+ggplot(data = DoseGlazsorted) +
+  geom_segment(aes(x = start, xend = stop, y = accession, yend = accession, color=DoseCat),
+               alpha=0.75, size=0.5) +
+  scale_y_discrete(name = "Clones at Ubiaja") +
+  scale_x_continuous(name="Chromosome 1 Mbp", limits=c(22000000,35000000)) +
+  scale_color_manual(values=c("#FFFFFF", "#FFCC66", "#FF9900", "#33FFCC", "#0066FF")) +
+  labs(color = str_wrap("Average Glaziovii allele dosage", width=10)) +
+  theme(axis.ticks.y=element_blank(), plot.background = element_rect(fill="gray95"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill="gray85"),
+        axis.text.y = element_text(size=2)) +
+  geom_vline(xintercept = 24060000, color="black", size=0.2, linetype="dashed") +
+  geom_vline(xintercept = 24150000, color="red", size=0.2, linetype="dashed")
+
+#dev.off()
+```
+
+
+
+
+Pick a set of diverse clones that are heterozygous in introgression region:
+```{r}
+library(ape)
+library(phylogram)
+library(stats)
+```
+
+Subset Dosage Matrix for heterozygous clones
+```{r}
+#DosageMatrix
+
+hetlist <- c("TMS18F1481P0029", "TMS18F1108P0012", "TMS18F1269P0003", "TMS18F1163P0020", "TMS15F1279P0006", "TMS14F1285P0017", "TMS18F1331P0005", "TMS18F1419P0037", "TMS18F1175P0039", "TMS18F1286P0003", "TMS15F1329P0005", "TMS18F1275P0004", "TMS15F1100P0005", "TMS18F1033P0018", "TMS18F1339P0034", "TMS18F1159P0011", "TMS18F1272P0038", "TMS18F1562P0004", "TMS18F1481P0029", "TMS14F1285P0006", "TMS18F1539P0086", "TMS18F1298P0026", "TMS18F1299P0012", "TMS18F1327P0021")
+
+hetclones <- grep(paste(hetlist,collapse="|"), rownames(DosageMatrix), value=TRUE)
+
+HetDosageMatrix <- subset(DosageMatrix, rownames(DosageMatrix) %in% hetclones)
+```
+
+
+Calculate genetic distances: dist.gene + dendrogram method (don't use this method)
+```{r, eval=FALSE}
+Het.dist <- dist.gene(HetDosageMatrix, method="pairwise")
+njtree <- nj(Het.dist)
+Hetdendro <- as.dendrogram(njtree)
+plot(Hetdendro, type="rectangle", cex=0.1)
+
+plot(as.phylo(Hetdendro), cex=0.6, edge.width=1, edge.lty=1, label.offset = 0.5, no.margin=TRUE)
+
+
+Hetdist.matrix <- as.matrix(Het.dist)
+
+clade1het <- c("TMS18F1163P0020_A18849","TMS18F1419P0037_A18587","TMS18F1272P0038_A18538","TMS18F1481P0029_A19215","TMS18F1562P0004_A19243")
+
+clade2het <- c("TMS14F1285P0006:250304026","TMS18F1298P0026_A19002","TMS14F1285P0017:250304037","TMS18F1299P0012_A19006","TMS15F1100P0005:250465254","TMS15F1100P0005_A18802","TMS18F1331P0005_A19221","TMS18F1339P0034_A19088","TMS18F1539P0086_A18415", "TMS18F1327P0021_A19144", "TMS18F1286P0003_A18974")
+
+clade3het <- c("TMS18F1269P0003_A18446", "TMS18F1269P0003_A18945", "TMS18F1275P0004_A18929", "TMS18F1108P0012_A18804", "TMS18F1033P0018_A18741","TMS18F1159P0011_A18820", "TMS15F1279P0006:250476669", "TMS18F1175P0039_A18536")
+
+#hetclonesgrouped <- list("group_1"=clade1het, "group_2"=clade2het, "group3"=clade3het)
+
+#write.csv(hetclonesgrouped, file = "~/Desktop/Research/het_clones_clustered.csv")
+
+
+#hclustfunc <- function(x, method = "complete", dmeth = "euclidean") {hclust(dist(x, method = dmeth), method = method)}
+
+#fittest <- hclustfunc(HetDosageMatrix)
+#plot(fittest, hang=-1, cex=0.4)
+```
+
+
+Calculate genetic distances: kinship matrix method:
+```{r}
+library(hierfstat)
+library(stats)
+
+Kinship_IITA_SamplesForGP_73119 <- readRDS("~/Desktop/Research/Kinship_IITA_SamplesForGP_73119.rds")
+
+KMatrix <- Kinship_IITA_SamplesForGP_73119
+
+
+#Subset for IITA het clones:
+KMatrix.names <- grep(paste(hetlist,collapse="|"), rownames(KMatrix), value=TRUE)
+
+KMatrix.UB <- subset(KMatrix, rownames(KMatrix) %in% KMatrix.names)
+KMatrix.UB <- KMatrix.UB[,colnames(KMatrix.UB) %in% KMatrix.names]
+
+DistMat.UB <- kinship2dist(KMatrix.UB)
+DistMat.UB[lower.tri(DistMat.UB)] <- 0
+#DistMatclust <- hclust(DistMat.UB)
+
+hclustfunc <- function(x, method = "complete", dmeth = "euclidean") {hclust(dist(x, method = dmeth), method = method)}
+
+DistMatclust <- hclustfunc(DistMat.UB)
+
+plot(DistMatclust, cex=0.5, main="heterzygous clones")
+
+
+
+#Export groups as a list
+DistMatgroups <- as.data.frame(cutree(DistMatclust, k = 3))
+DistMatgroups$name <- rownames(DistMatgroups)
+DistMatgroups$group <- DistMatgroups[,1]
+DistMatgroups <- DistMatgroups[,2:3]
+
+
+clade1 <- DistMatgroups$name[DistMatgroups$group ==1]
+clade2 <- DistMatgroups$name[DistMatgroups$group ==2]
+clade3 <- DistMatgroups$name[DistMatgroups$group ==3]
+#clade4 <- DistMatgroups$name[DistMatgroups$group ==4]
+#clade5 <- DistMatgroups$name[DistMatgroups$group ==5]
+
+hetclonesgrouped <- list("group_1"=clade1, "group_2"=clade2, "group3"=clade3)
+
+#write.csv(DistMatgroups, file = "~/Desktop/Research/het_clones_grouped.csv")
+
+```
+
+Find distantly related panel of homozygous esculenta & heterozygous  
+
+```{r}
+homoesclist <- c("TMS14F1284P0019", "TMS18F1161P0009", "TMS14F1036P0007", "TMS18F1302P0057", "IBA30572", "TMS18F1481P0075", "TMEB419_A19114", "TMS14F1310P0015", "TMS18F1298P0013", "IBA980581", "TMS15F1482P0098", "TMS18F1307P0038", "TMS14F1287P0008", "IBA980581", "TMS18F1310P0081")
+
+
+#Subset for IITA het clones:
+KMatrix.homnames <- grep(paste(homoesclist,collapse="|"), rownames(KMatrix), value=TRUE)
+
+KMatrix.hometUB <- subset(KMatrix, rownames(KMatrix) %in% KMatrix.homnames)
+KMatrix.hometUB <- KMatrix.hometUB[,colnames(KMatrix.hometUB) %in% KMatrix.homnames]
+
+DistMat.hometUB <- kinship2dist(KMatrix.hometUB)
+DistMat.hometUB[lower.tri(DistMat.hometUB)] <- 0
+
+hclustfunc <- function(x, method = "complete", dmeth = "euclidean") {hclust(dist(x, method = dmeth), method = method)}
+
+DistMatclusthome <- hclustfunc(DistMat.hometUB)
+
+plot(DistMatclusthome, cex=0.5)
+
+
+```
+
+
+
+
+
+
+
+
+
+## Try to add missing genotypes
+Convert VCF to binary PLINK format. 
+```{bash, eval=F, echo=T}
+export PATH=/programs/plink-1.9-x86_64-beta3.30:$PATH;
+plink \
+    --vcf UBadditionalgenotypes.vcf \
+    --make-bed --const-fid \
+    --out UBadditionalgenotypes
+```
+
+
+```{bash, eval=F, echo=T}
+export PATH=/programs/plink-1.9-x86_64-beta3.30:$PATH;
+plink \
+    --bfile AllChrom_IITAprogeny_AR2filtered \
+    --extract data/AIM_StrictPlusGlazPoly_SNPsForPLINKtoSubsetDivPanel_32717.txt \
+    --recode A --recode-allele data/AIM_StrictPlusGlazPoly_AllelesForPLINKtoCountDivPanel_32717.txt \
+    --out data/AIMs_IITAprogeny_StrictPlusGlazPoly_32717 
+```
+
+
+
+
+
+
+
+### Old code scratch paper
+
+```{r, eval=FALSE, echo=FALSe}
+#UBcutnames <- gsub("P.*","", UBnames)
+#UBcutnames2 <- gsub("[[:punct:]]", "", UBcutnames)
+#UBcutnames3 <- gsub("IITA", "", UBcutnames2)
+#UBinDM <- grep(paste(UBcutnames3,collapse="|"), DosMatnames, value=TRUE)
+```
+
+Try nesting:
+Don't know how to iterate commands over tibbles in the column list
+
+```{r}
+genocopy <- genos
+genocopy$accessions <- row.names(genocopy)
+newgenocopy <- genocopy %>% nest(snpdata = !accessions)
+
+#This way lists the snps as columns inside the snpdata column when it should rows inside the column
+#new.df <- structure(list(genodata = split(genos, rn <- seq_len(nrow(genos)))), row.names = row.names(genos), class = "data.frame")
+
+```
+
+

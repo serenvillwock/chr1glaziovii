@@ -1,0 +1,491 @@
+---
+title: "Chromosome 4 introgression markers"
+author: "Seren Villwock"
+date: "3/18/2021"
+output: html_document
+---
+
+Select candidate SNPs for KASP markers by analyzing the regions around the 
+Use by looking at the bcftools query output:
+
+```{bash, eval=F}
+bcftools query -f '%POS\t%REF\t%ALT\t%INFO/AD\t[%SAMPLE= %GT\t%AD\t%DP\t] \n' candidateregions.vcf  > candidateregion.stats.txt
+```
+
+Manually edit the candidateregion.stats.txt file to include the SNP column with candidate names. > candidateregion.stats.csv
+
+
+Read in the candidateregion.stats.csv file
+```{r}
+library(stringr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+setwd("/Users/serenwork/Desktop/Research/Glaziovii_introgression/")
+
+snp.stats4 <- read.csv("./chromosome_4/candidateregion.stats4.csv", header = FALSE)
+
+escDP4 <- read.table("./chromosome_4/escDP4.txt") #names of homozygous esculenta individuals
+glazDP4 <- read.table("./chromosome_4/glazDP4.txt") #names of homozygous glaziovii individuals
+hetDP4 <- read.table("./chromosome_4/hetDP4.txt") #names of heterozygous glaziovii introgressed individuals
+
+
+# move genotype names to column names
+for (i in 5:11) {
+  colnames(glazDP4)[i] <- strsplit(glazDP4[1,i], split="=")[[1]][1]
+  glazDP4[,i] <- gsub(".*=","",glazDP4[,i])
+}
+glazDP4[,5:11] <- as.numeric(unlist(glazDP4[,5:11]))
+
+for (i in 5:56) {
+  colnames(escDP4)[i] <- strsplit(escDP4[1,i], split="=")[[1]][1]
+  escDP4[,i] <- gsub(".*=","",escDP4[,i])
+}
+escDP4[,5:56] <- as.numeric(unlist(escDP4[,5:56]))
+
+
+for (i in 5:24) {
+  colnames(hetDP4)[i] <- strsplit(hetDP4[1,i], split="=")[[1]][1]
+  hetDP4[,i] <- gsub(".*=","",hetDP4[,i])
+}
+hetDP4[,5:24] <- as.numeric(unlist(hetDP4[,5:24]))
+
+
+
+```
+
+
+Find any low DP samples we should exclude:
+```{r}
+glazDPtotal <- summarise_all(glazDP4[,5:ncol(glazDP4)], sum)
+hetDPtotal <- summarise_all(hetDP4[,5:ncol(hetDP4)], sum)
+escDPtotal <- summarise_all(escDP4[,5:ncol(escDP4)], sum)
+```
+Exclude MglazioviiR and MglazioviiS for low DP.
+
+
+
+
+
+
+
+
+Look at distribution of pre-filtering candidates:
+```{r}
+candidates4pf <- read.table("./chromosome_4/chr4_candidates_prefiltering0318.txt")[[1]]
+
+candidates4dfpf <- as.data.frame(candidates4pf)
+ggplot(data=candidates4dfpf) +
+  geom_segment(aes(x=candidates4pf, xend=candidates4pf+10, y=0, yend=1), color="steelblue", size=0.1) +
+  #geom_segment(aes(x=conserved.start, xend=conserved.stop, y=0, yend=1), color="red", size=0.001, alpha=0.05) +
+  scale_y_continuous(labels=NULL)
+
+
+
+```
+
+
+
+Look at distribution of post-filtering candidates:
+```{r}
+candidates4 <-snp.stats4[,1]
+candidates4df <- as.data.frame(candidates4)
+
+ggplot(data=candidates4df) +
+  geom_segment(aes(x=candidates4, xend=candidates4+10, y=0, yend=1), color="steelblue", size=0.1) +
+  #geom_segment(aes(x=conserved.start, xend=conserved.stop, y=0, yend=1), color="red", size=0.001, alpha=0.05) +
+  scale_y_continuous(labels=NULL)
+```
+
+
+Make regions-file to subset vcf with around 401 candidates:
+```{r}
+candidates4region <- candidates4df
+candidates4region$start <- candidates4region$candidates4-50
+candidates4region$stop <- candidates4region$candidates4+50
+candidates4region$CHROM <- "Chromosome04"
+
+candidates4region_list <- as.data.frame(cbind(candidates4region$CHROM, candidates4region$start, candidates4region$stop))
+
+
+rownames(candidates4region_list) <- candidates4region$candidates4
+colnames(candidates4region_list) <- c("CHROM","POS","END")
+
+#write.csv(candidates4region_list, "./chromosome_4/candidates4region_list.csv", col.names=FALSE, row.names=FALSE)
+```
+
+
+Read in regional vcf around 401 candidates and format 
+```{r}
+cand.stats4 <- read.table("./chromosome_4/candidates4.region.stats.txt")
+colnames(cand.stats4)[1:4] <- c("POS","REF","ALT","QUAL")
+cand.stats4$CAND <- NA
+cand.stats4$RANGE <- NA
+
+
+
+for (i in 1:length(candidates4)) { 
+  cand.stats4$CAND[grep(candidates4[i], cand.stats4$POS)] <- candidates4[i]
+}
+
+for (i in 1:length(cand.stats4$CAND)) {
+  if(!is.na(cand.stats4$CAND[i])){cand.stats4$RANGE[i] <- 0 }
+}
+
+cand.pos <- which(cand.stats4$RANGE == 0)
+
+for (i in 1:length(cand.pos)) {
+  cand.stats4$RANGE[(cand.pos[i]-50):(cand.pos[i]+50)] <- seq(from=-50, to=50)
+}
+  
+```
+
+
+Calculate DP:
+```{r}
+# Calculate total DP for all samples:
+ADcolnums <- seq(from=8, to=332, by=4)
+cand.stats4$DP_SUM <- rowSums(cand.stats4[,ADcolnums])
+
+
+# Calculate total DP just for non-outlier glaz samples:
+glazcolnums <- c(92, 96, 160, 172, 180)
+cand.stats4$DP_SUM_glaz <- rowSums(cand.stats4[,glazcolnums])
+
+
+
+
+candidate4.summary <- data.frame()
+
+for (i in 1:length(candidates4))
+{
+  cand.row = grep(candidates4[i], cand.stats4$CAND)
+
+DP_SUMs_i <- cand.stats4$DP_SUM[(cand.row-50):(cand.row+50)]
+mean_i <- mean(DP_SUMs_i)
+min_i <- min(DP_SUMs_i)
+max_i <- max(DP_SUMs_i)
+
+
+DP_SUMs_g <- cand.stats4$DP_SUM_glaz[(cand.row-50):(cand.row+50)]
+mean_g <- mean(DP_SUMs_g)
+min_g <- min(DP_SUMs_g)
+max_g <- max(DP_SUMs_g)
+
+
+candidate4.summary <- rbind(candidate4.summary, c(candidates4[i], mean_i, min_i, max_i, mean_g, min_g, max_g))
+}
+
+names(candidate4.summary) <- c("candidate", "meanDP", "minDP", "maxDP", "meanglazDP", "minglazDP", "maxglazDP")
+
+
+```
+
+
+Filter by conservation level in surrounding region:
+```{r}
+cand.stats4$ALT[cand.stats4$ALT=="."] <- NA
+candidate4.summary$other.snps <- NA
+where.indels <- nchar(cand.stats4$ALT) > 1 | nchar(cand.stats4$REF) > 1
+
+for (i in 1:length(candidates4)){
+  
+  cand.row <- which(grepl(candidates4[i], cand.stats4$CAND))
+  lower.range <- cand.row - 50
+  upper.range <- cand.row + 50
+  
+  other.snps.count <- sum(which(!is.na(cand.stats4$ALT)) %in% lower.range:upper.range)
+  
+  indel.cnt <- sum(where.indels[lower.range:upper.range], na.rm=TRUE)
+    
+  
+  candidate4.summary[i,"other.snps"] <- other.snps.count
+  candidate4.summary[i,"indel.count"] <- indel.cnt
+}
+
+  
+```
+
+
+Visualize summary:
+```{r}
+hist(candidate4.summary$indel.count)
+hist(candidate4.summary$meanDP)
+hist(candidate4.summary$meanglazDP)
+hist(candidate4.summary$other.snps)
+hist(candidate4.summary$indel.count)
+```
+
+
+Filter for best candidates:
+```{r}
+#remove sites with more than one indel:
+candidate4.summary.noindels <- candidate4.summary[candidate4.summary$indel.count == 0,]
+candidate4.summary.noindels.cons <- candidate4.summary.noindels[candidate4.summary.noindels$other.snps < 6,]
+
+#take top 65 candidates with reasonable DP
+top.65.candidates <- candidate4.summary.noindels.cons[candidate4.summary.noindels.cons$meanglazDP < 80,]
+
+top.65.candidates <- top.65.candidates[top.65.candidates$meanDP < 1500,]
+
+#take top candidates with lowest number of other nearby SNPs
+top.conserved <- slice_max(top.65.candidates, order_by=-other.snps, n=50)
+
+#write.table(top.65.candidates$candidate, "Chr4_glaz_amp_markers", row.names=FALSE, col.names=FALSE)
+
+```
+
+Visualize:
+```{r}
+ggplot(data=top.conserved) +
+  geom_segment(aes(x=candidate, xend=candidate+10, y=0, yend=1), color="steelblue", size=0.1) +
+  #geom_segment(aes(x=conserved.start, xend=conserved.stop, y=0, yend=1), color="red", size=0.001, alpha=0.05) +
+  scale_y_continuous(labels=NULL)
+
+```
+
+Filter for distance between markers
+```{r}
+top.conserved.keep = c()
+top.conserved.close = c()
+  
+for(i in 1:nrow(top.conserved)){
+    low.range = top.conserved$candidate[i] - 200000 # look in 200kb region
+    top.range = top.conserved$candidate[i] + 200000
+    
+    if(length(top.conserved[top.conserved$candidate > low.range 
+                            & top.conserved$candidate < top.range, 1]) == 1) 
+      #check if there are candidates close together; keep them if there are none nearby
+    {top.conserved.keep = c(top.conserved.keep, i)} else {
+      #if there are some close together, pick best one to keep 
+        top.conserved.close = c(top.conserved.close, i) 
+        #add to list of those that cluster together
+        
+        cluster.rows = which(top.conserved$candidate > low.range & top.conserved$candidate < top.range)
+        cluster = top.conserved[cluster.rows,]
+        cluster.rep = cluster.rows[which.min(cluster$other.snps)][1] 
+        #pick the one with lowest other snps or the first one in case of a tie
+        
+        top.conserved.keep = c(top.conserved.keep, cluster.rep)
+      }
+}
+top.conserved.keep = unique(top.conserved.keep)
+
+top.conserved.spaced = top.conserved[top.conserved.keep,]
+
+ggplot(data=top.conserved.spaced) +
+  geom_segment(aes(x=candidate, xend=candidate+10, y=0, yend=1), color="steelblue", size=0.1) +
+  #geom_segment(aes(x=conserved.start, xend=conserved.stop, y=0, yend=1), color="red", size=0.001, alpha=0.05) +
+  scale_y_continuous(labels=NULL)
+  
+
+#check spacing:
+top.ordered = top.conserved.spaced[order(as.numeric(top.conserved.spaced$candidate)),]
+
+for(i in 1:(nrow(top.ordered)-1)){
+  if(top.ordered$candidate[i+1]-top.ordered$candidate[i] < 200000 )
+     {print(paste0(i, top.ordered$candidate[i+1]-top.ordered$candidate[i]))}
+}
+```
+
+
+
+
+7/9/21: get surrounding sequence information (adapting from Chr 1 code):
+```{r}
+library(seqinr)
+
+snp.stats = cand.stats4 #copy dataframes to new names
+top.candidates = top.ordered$candidate
+top.snps=top.candidates
+top.snp.stats = top.ordered
+
+# redo ranges around top snps to make sure they aren't overlapping
+snp.stats$CAND <- NA
+snp.stats$RANGE <- NA
+
+for (i in 1:length(top.snps)) { 
+  snp.stats$CAND[grep(top.snps[i], snp.stats$POS)] <- top.snps[i]
+}
+
+for (i in 1:length(snp.stats$CAND)) {
+  if(!is.na(snp.stats$CAND[i])){snp.stats$RANGE[i] <- 0 }
+}
+
+cand.pos <- which(snp.stats$RANGE == 0)
+
+for (i in 1:length(cand.pos)) {
+  snp.stats$RANGE[(cand.pos[i]-50):(cand.pos[i]+50)] <- seq(from=-50, to=50)
+}
+  
+
+
+#Initiate columns for IUPAC consensus sequences
+top.snp.stats$seq <- NA
+top.snp.stats$IUPAC <- NA
+
+snp.stats$problem <- NA
+
+#Flag indels - these will be fixed manually
+snp.stats$problem[which(nchar(snp.stats$REF) != 1)] <- "y"
+
+#remove commas from ALT string so multiple alt alleles get included in IUPAC
+snp.stats$ALT_collapse <- sub(pattern=",", replacement="", x=snp.stats$ALT)
+
+
+#make a column for the nucleotide sequence 
+for (i in 1:nrow(snp.stats)) {
+  if (!is.na(snp.stats[i, "ALT"])) {
+    
+    #wherever there is an alt allele, paste the ref & alt alleles together in the seq column
+  snp.stats[i, "seq"] <- paste(c(snp.stats[i, "REF"], snp.stats[i, "ALT_collapse"]), collapse="") 
+  
+  #if there is no alt allele, just put the ref allele in the seq column
+  } else {
+  snp.stats[i, "seq"] <- snp.stats[i, "REF"]
+  } 
+  
+  # make a consensus sequence with bma()  
+  snp.stats$IUPAC[i] <- bma(unlist(strsplit(snp.stats$seq[i], split="")))
+  
+  
+  
+}
+
+#capitalize the consensus
+snp.stats$IUPAC <- toupper(snp.stats$IUPAC)
+
+#add a bracket around the candidate SNP
+snp.stats$IUPAC <- with(snp.stats, ifelse(!is.na(snp.stats$CAND), paste0("[", REF, "/",ALT_collapse,"]"), IUPAC))
+
+#flag the indel sites
+snp.stats$IUPAC <-with(snp.stats, ifelse(nchar(snp.stats$REF) != 1 , paste0("*(", REF, ")"), IUPAC))
+
+
+#lowercase for low quality sites
+snp.stats$IUPAC <- with(snp.stats, ifelse(snp.stats$DP_SUM_glaz < 10 | snp.stats$DP_SUM < 600, tolower(IUPAC), IUPAC))
+
+
+
+#write.csv(snp.stats, "~/Desktop/Research/Glaziovii_introgression/chr4.top.snp.stats.IUPAC.csv")
+```
+
+
+Print concatenate sequences to txt and csv files:
+```{r}
+consensus_seqlist = list() # initiate list
+
+for (i in 1:length(top.candidates)) {
+  
+  this.cand.name <- top.candidates[i]
+  
+  row.with.cand <- which(grepl(top.candidates[i], snp.stats$CAND))
+  
+  this.cand  <- snp.stats[(row.with.cand-50):(row.with.cand+50),]
+  
+    this.cand <- this.cand[,c(1:4,334:340)] 
+    #select POS, REF, ALT, QUAL, RANGE, seq, IUPAC,
+    
+    this.cand.df <- data.frame("POS"=this.cand$POS, 
+                               "Range"=this.cand$RANGE,
+                               "REF"=this.cand$REF, 
+                               "ALT"=this.cand$ALT,
+                               "seq" = this.cand$seq,
+                               "IUPAC" = this.cand$IUPAC)
+    
+    
+    consensus.seq <- paste(this.cand.df$IUPAC, collapse="")
+    
+    consensus_seqlist[[i]] <- consensus.seq # add it to the main list
+  
+    names(consensus_seqlist[[i]]) <- top.candidates[i]
+}
+
+
+folder <- "~/Desktop/Research/Glaziovii_introgression/chromosome_4/candidate_consensus_seqs_chr4/"
+all.cand.seq.df <- data.frame(matrix(ncol = 2, nrow = length(consensus_seqlist)))
+names(all.cand.seq.df) <- c("candidate","consensus")
+
+
+for (i in 1:length(consensus_seqlist)) {
+  
+filepath <- paste(folder, names(consensus_seqlist[[i]]), '.txt', sep="")
+#write.table(consensus_seqlist[[i]], filepath, sep="\n")
+  
+  all.cand.seq.df[i,2] <- consensus_seqlist[[i]]
+  all.cand.seq.df[i,1] <- names(consensus_seqlist[[i]])
+
+}
+
+#write.csv(all.cand.seq.df, paste0(folder,"chr4.topcandidate.consensus.csv"))
+
+
+```
+
+
+print REF/ALT list and final file:
+```{r}
+REF.ALT.list <- snp.stats[which(!is.na(snp.stats$CAND)), c(2:3, 333)]
+#select REF, ALT, CAND
+
+all.cand.seq.alleles = merge(all.cand.seq.df, REF.ALT.list, by.x="candidate", by.y="CAND")
+
+colnames(all.cand.seq.alleles)[1] <- "v7_position"
+
+#reorder and renumber rows:
+all.cand.seq.alleles = all.cand.seq.alleles[order(as.numeric(all.cand.seq.alleles$v7_position)),]
+rownames(all.cand.seq.alleles) = 1:nrow(all.cand.seq.alleles) 
+
+#write.csv(all.cand.seq.alleles, paste0(folder,"chr4.topcandidate.consensus.csv"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+OLD
+For future reference: read in a VCF:
+```{r}
+library(vcfR)
+chr4cand.regions <- read.vcfR("./chromosome_4/intrgr.chr4.401cand.region.vcf")
+chr4cand.regions.df <- create.chromR(chr4cand.regions)
+plot(chr4cand.regions.df)
+```
+
+
+visualize distribution of markers for markers on chr1 and chr4:
+
+```{r}
+chr1markers <- read.table("Chr1_glaz_KASP_markers.txt")[,1]
+chr1markers.y <- rep(1, length(chr1markers))
+plot(chr1markers, chr1markers.y,
+     ylab="", xlab="chromosome 1 position",
+     main="chr 1 glaziovii marker distribution",
+     yaxt="n")
+
+
+chr4markers <- read.table("Chr4_glaz_amp_markers")[,1]
+chr4markers.y <- rep(1, length(chr4markers))
+
+plot(chr4markers, chr4markers.y, 
+     ylab="", xlab="chromosome 4 position",
+     main="chr 4 glaziovii marker distribution",
+     yaxt="n")
+
+```
+

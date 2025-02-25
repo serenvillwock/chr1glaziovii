@@ -1,0 +1,82 @@
+Uplifting a list of IDM SNPs from v6 to v7 
+
+1/26/21
+- starting with csv, remove header line
+(columns are: S1_#### , chr# , position)
+- edit bed_gen.py with file name of csv
+- navigate to folder and run command: 
+python bed_gen.py > IDMlist_all.bed
+(makes a bed file from SNP list where the "ranges" are snp position - 1 to the snp position)
+- uplift the bed file using CrossMap (http://crossmap.sourceforge.net/)
+-  CrossMap.py bed Mesculenta_305_v6.to_v7.final.numeric.chain IDMlist.bed IDMlist_uplifted.bed
+- edit uplift-remap.py with the file name of csv and uplifted bed 
+python uplift-remap.py > IDMlist_uplifted_v7.csv
+
+
+- original v6 IDM list had __ strict IDMs on chromosome 1
+- uplifted v7 IDM list has 2476 strict IDMs on chromosome 1 (a few got mapped to different chromosomes)
+
+
+
+Redoing with whole IDM list (in case some from other chromosomes get re-mapped to chr 1 in v7):
+
+python bed_gen.py > IDMlist_all.bed 
+
+CrossMap.py bed Mesculenta_305_v6.to_v7.final.numeric.chain IDMlist_all.bed IDMlist_all_uplifted.bed
+
+python uplift-remap.py > IDMlist_all_uplifted_v7.csv
+
+Result: 2476 strict IDMs were uplifted to chromosome 1
+
+
+
+
+
+
+
+#############
+
+Uplifting a list of validated markers from Dr. Rabbi from v6 to v7 
+
+8/2/21
+- start with all_markers_to-uplift.csv: ( columns are: S1_#### , chr# , position )
+- remove header, saved as  all_markers_to-up_headless.csv
+- edit bed_gen.py with file name of csv 
+- navigate to folder and run command: 
+python bed_gen.py > all_markers.bed
+(makes a bed file from SNP list)
+- uplift the bed file using CrossMap (http://crossmap.sourceforge.net/):
+-  CrossMap.py bed Mesculenta_305_v6.to_v7.final.numeric.chain all_markers.bed all_markers_uplifted.bed
+- edit uplift-remap.py with the file name of original csv and uplifted bed, & edit so that the number of SNPData vals and column names (referenced several places) match the number of columns in the original csv
+python uplift-remap.py > markers_uplifted_v7.csv
+
+#############
+
+
+Uplifting IDMs from v6 to v8 (on Robbins server)
+- Starting with IDM_list_headerless.csv
+
+- create bed file:
+python bed_gen.py > IDM_list_all.bed
+- deleted weird text '<feff>' in third column 
+
+CrossMap.py bed Mesculenta_671_v8.0fromv6.0.final.chain IDM_list_all.bed IDMlist_all_v8uplifted.bed
+
+python uplift-remap.py > IDMlist_all_uplifted_v8.csv
+
+Result: CrossMap.py printed a message that it 'read the chain file' but then gave an empty output bed. I tried adding the header text from the original v6tov7 chain file (not sure what this does) to the v6tov8 file but that didn't help. Probably the bed file needs to say "Chromosome01" rather than "1" so it can be matched with the chain file.
+
+Starting again with IDM_list_all_strict_chr-spelled-out.csv
+Modified 'bed_gen.py' with the name of the csv
+
+python bed_gen.py > IDM_list_strct.bed
+
+CrossMap.py bed Mesculenta_671_v8.0fromv6.0.final.chain IDM_list_strct.bed IDM_list_strct_v8uplifted.bed
+
+Modified 'uplift-remap.py' with name of files
+python uplift-remap.py > IDMlist_all_uplifted_v8.csv
+
+
+
+
+

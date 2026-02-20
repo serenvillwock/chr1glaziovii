@@ -1,0 +1,117 @@
+﻿trait_names,trait_format
+stkplt,number of planted stakes counting|CO_334:0000159
+pltstk,number of planted stakes counting|CO_334:0000159
+sprout,sprouting proportion|CO_334:0000008
+sprtct1,sprout count at one-month|CO_334:0000213
+sprtct3,sprout count at three-month|CO_334:0000214
+sprtct6,sprout count at six-month|CO_334:0000215
+sprtct9,sprout count at nine-month|CO_334:0000216
+vigor,initial vigor assessment 1-7|CO_334:0000009
+cmd1s,cassava mosaic disease severity 1-month evaluation|CO_334:0000191
+cmd3s,cassava mosaic disease severity 3-month evaluation|CO_334:0000192
+cmd6s,cassava mosaic disease severity 6-month evaluation|CO_334:0000194
+cmd12s,cassava mosaic disease severity 12-month evaluation|CO_334:0000199
+cmd1i,cassava mosaic disease incidence 1-month evaluation|CO_334:0000195
+cmd3i,cassava mosaic disease incidence 3-month evaluation|CO_334:0000196
+cmd6i,cassava mosaic disease incidence 6-month evaluation|CO_334:0000198
+cbb3s,cassava bacterial blight severity 3-month evaluation|CO_334:0000175
+cbb6s,cassava bacterial blight severity 6-month evaluation|CO_334:0000176
+cbb3i,cassava bacterial blight incidence 3-month evaluation|CO_334:0000178
+cbb6i,cassava bacterial blight incidence 6-month evaluation|CO_334:0000179
+cbb6i,cassava anthractnose disease severity in 6-month|CO_334:0000184
+cad9s,cassava anthractnose disease severity in 9-month|CO_334:0000185
+cad6i,cassava anthractnose disease incidence in 6-month|CO_334:0000181
+cad9i,cassava anthractnose disease incidence in 9-month|CO_334:0000182
+sg,staygreen visual scale 1-9|CO_334:0000224
+pltarc,plant architecture visual rating 1-5|CO_334:0000099
+lodplt,proportion lodged plants in percentage|CO_334:0000094
+nohav,plant stands harvested counting|CO_334:0000010
+rtno,root number counting|CO_334:0000011
+rtwt,fresh root weight|CO_334:0000012
+fyld,fresh root yield|CO_334:0000013
+hi,harvest index variable|CO_334:0000015
+dyld,dry yield|CO_334:0000014
+rtsz,storage root size visual rating 1-7|CO_334:0000019
+rtshp,storage root shape visual rating 1-4|CO_334:0000020
+nklgt,root neck length visual rating 0-7|CO_334:0000022
+outcol,storage root periderm color visual rating 1-4|CO_334:0000064
+rtoutcol,storage root periderm color visual rating 1-4|CO_334:0000064
+inncol,storage root cortex color visual rating 1-4|CO_334:0000115
+rtinncol,storage root cortex color visual rating 1-4|CO_334:0000115
+plpcol,storage root pulp color visual rating 1-3|CO_334:0000021
+tchart,total carotenoid by chart 1-8|CO_334:0000161
+tc,total carotenoid by chart 1-8|CO_334:0000161
+easepl,ease of peeling root cortex visual rating 1-3|CO_334:0000308
+rtrot,rotted storage root counting|CO_334:0000084
+cbsdr12s,cassava brown streak disease root severity 12-month evaluation|CO_334:0000201
+necrosis,cassava brown streak disease root severity 12-month evaluation|CO_334:0000201
+shtwt,fresh shoot weight measurement in kg|CO_334:0000016
+tyld,top yield|CO_334:0000017
+pd,poundability assessment 0-4|CO_334:0000074
+pdtas,taste of boiled root rating 1-3|CO_334:0000085
+pdcol,boiled tuberous root color visual 1-3|CO_334:0000114
+rwtair,root weight in air|CO_334:0000157
+rwtwat,root weight in water|CO_334:0000158
+spgrv,specific gravity|CO_334:0000163
+dmspg,dry matter content by specific gravity method|CO_334:0000160
+tcichk,total carotenoid by iCheck method|CO_334:0000162
+tcspec,total carotenoid content in ug/g|CO_334:0000073
+hcnpic,hydrogen cyanide potential picrate method 1-9|CO_334:0000091
+hcn_pic,hydrogen cyanide potential picrate method 1-9|CO_334:0000091
+dm,dry matter content percentage|CO_334:0000092
+apubes,apical pubescence visual rating 0-2|CO_334:0000309
+pubeseverity3,apical pubescence visual rating 0-2|CO_334:0000309
+lcolexp,first fully expanded leaf color visual rating 1-9|CO_334:0000102
+lcol3,first fully expanded leaf color visual rating 1-9|CO_334:0000102
+lfcolf,first fully expanded leaf color visual rating 1-9|CO_334:0000102
+apicol3,unexpanded apical leaf color visual rating 1-9|CO_334:0000101
+lfcola,unexpanded apical leaf color visual rating 1-9|CO_334:0000101
+lcolapc,unexpanded apical leaf color visual rating 1-9|CO_334:0000101
+pltht,plant height measurement in cm|CO_334:0000018
+brnlvl,branching level counting at harvest|CO_334:0000079
+brnlev,branching level counting at harvest|CO_334:0000079
+lodplt,proportion lodged plants in percentage|CO_334:0000094
+brnht,first apical branch height measurement in cm|CO_334:0000106
+pltarc,plant architecture visual rating 1-5|CO_334:0000099
+plarch,plant architecture visual rating 1-5|CO_334:0000099
+pltype,plant architecture visual rating 1-5|CO_334:0000099
+cgm1,cassava green mite severity first evaluation|CO_334:0000189
+cgm2,cassava green mite severity second evaluation|CO_334:0000190
+pltshp,plant shape visual assessment 1-4|CO_334:0000264
+petcol,petiole color visual rating 1-9|CO_334:0000023
+lfshp,central leaf shape visual rating 1-10|CO_334:0000119
+lflbno,leaf lobe number counting|CO_334:0000082
+rtvr,root evaluation scaled 1-5|CO_334:0000228
+stmcol,stem color visual scoring 1-4|CO_334:0000062
+stemgh,young stem growth habit visual rating 1&2|CO_334:0000104
+ysmgrht,young stem growth habit visual rating 1&2|CO_334:0000104
+lflbshp,central leaf shape visual rating 1-10|CO_334:0000119
+lfret,leaf retention visual rating 1-5|CO_334:0000048
+b-crypto,b Crypto|CO_334:0000174
+cis-9,cis 9|CO_334:0000173
+trans-9,trans 9|CO_334:0000172
+bcret,beta carotene content|CO_334:0000095
+flower,flower visual rating 0&1|CO_334:0000111
+flowerab,flowering ability visual assessment 0-3|CO_334:0000233
+BrnchNo,number of forks counting|CO_334:0000146
+flowinc,female flower incidence in proportion|CO_334:0000235
+nmkrtno,non marketable root number counting|CO_334:0000168
+mktrtno,marketable root number counting|CO_334:0000169
+stemwt,stem weight measurement in kg|CO_334:0000127
+stmpwt,stump weight measurement in kg|CO_334:0000135
+nmrtwt,non marketable root weight measurement in kg|CO_334:0000132
+mkrtwt,marketable root weight measurement in kg|CO_334:0000131
+stkwt,stock weight measurement in kg|CO_334:0000170
+astmlt,average stem length|CO_334:0000128
+brnhbt,branching habit visual observation 1-4|CO_334:0000140
+cbsdl9s,cassava brown streak disease leaf severity 9-month evaluation|CO_334:0000206
+cads,cassava anthractnose disease severity in 3-month|CO_334:0000218
+cadi,cassava anthractnose disease incidence in 3-month|CO_334:0000219
+nostm,stem number counting|CO_334:0000129
+norot,rotted storage root counting|CO_334:0000084
+cad6s,cassava anthractnose disease severity in 6-month|CO_334:0000184
+fibre,fibre content estimation in percentage|CO_334:0000067
+tpshwt,tip shoot weight measurement in kg|CO_334:0000130
+cmbs,cassava mealy bug severity by visual rating 1-5|CO_334:0000034
+cmb3s,cassava mealy bug severity by visual rating 1-5|month 3|COMP:0000167
+cmb6s,cassava mealy bug severity by visual rating 1-5|month 6|COMP:0000168

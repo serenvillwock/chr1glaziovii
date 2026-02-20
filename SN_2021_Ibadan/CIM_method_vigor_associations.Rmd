@@ -1,0 +1,196 @@
+---
+title: "Composite interval mapping for vigor associations in glaziovii introgression"
+author: "Seren Villwock"
+date: '2022-08-15'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(qtl)
+```
+
+
+Use composite interval mapping with Rqtl package to test for *M. glaziovii* introgression  QTL affecting measures of vigor from the 2021 seedling nursery.
+Based on:
+[https://avikarn.com/2019-04-23-composite-interval-mapping/]
+
+
+Read in genetic map data.
+
+The input `phenoGeno_rqtl.csv` file contains the 10 Chr. 1 KASP marker genotypes and phenotypes for 3008 individuals, as well as the cM positions of the markers, which were taken from Ariel Chan's 2018 genetic map (uplifted from v6 to v7). It is formatted according to the rQTL CSV format.
+```{r}
+#With Chan estimated map positions:
+phenoGeno <-read.cross(format = "csv", file = "phenoGeno_rqtl.csv",  
+                 na.strings= c('NA'), genotypes = c("0","1","2"))
+summary(phenoGeno)
+
+plot(phenoGeno)
+
+```
+
+The `calc.genoprob()` function uses a hidden Markov model to calculate the probabilities of the true  genotypes given the observed marker data, with  allowance for genotyping errors. Then the `sim.geno()` function simulates from the joint distribution Pr(g | O) where g is the underlying genotype vector and O is the observed multipoint marker data.
+```{r}
+phenoGeno_calc <- calc.genoprob(phenoGeno, step=0, off.end=0.0, error.prob=1.0e-4, stepwidth = "fixed", map.function="kosambi")
+
+phenoGeno_cross <- sim.geno(phenoGeno_calc,  n.draws=32, step=0, off.end=0.0, error.prob=1.0e-4, stepwidth = "fixed", map.function="kosambi")
+
+```
+
+
+
+## Stem diameter
+
+Composite interval mapping to scan for stem diameter QTL. 
+```{r}
+scan.cim = cim(phenoGeno_cross, pheno.col=1, map.function="kosambi")
+
+scan.cim.w1 = cim(phenoGeno_cross, pheno.col=1, map.function="kosambi", window=1)
+
+scan.cim.w2 = cim(phenoGeno_cross, pheno.col=1, map.function="kosambi", window=2)
+
+scan.cim.w5 = cim(phenoGeno_cross, pheno.col=1, map.function="kosambi", window=5)
+
+scan.cim.w10 = cim(phenoGeno_cross, pheno.col=1, map.function="kosambi", window=10)
+
+scan.cim.w0 = cim(phenoGeno_cross, pheno.col=1, map.function="kosambi", window=0)
+```
+
+Perform a permutation test to identify a good LOD threshold corresponding to alpha = 0.05. Identify stem diameter QTL with LOD scores above the threshold.
+```{r}
+#scan.cim.perm = cim(phenoGeno_cross, pheno.col=1, map.function="kosambi", n.perm=1000)
+#summary(scan.cim.perm)["5%",1]
+
+set.seed(14850)
+LODthresh <- 2.376086 
+
+sig_markers  <- summary(scan.cim, threshold = LODthresh)
+print(sig_markers)
+
+plot(scan.cim, xlim = c(113,160), main="CIM for seedling stem diameter") + abline( a = LODthresh, b = 0, lty="dashed")
+
+plot(scan.cim.w1, xlim = c(113,160), main="window=1") + abline( a = LODthresh, b = 0, lty="dashed")
+
+plot(scan.cim.w2, xlim = c(113,160), main="window=2") + abline( a = LODthresh, b = 0, lty="dashed")
+
+plot(scan.cim.w5, xlim = c(113,160), main="window=5") + abline( a = LODthresh, b = 0, lty="dashed")
+
+plot(scan.cim.w10, xlim = c(113,160), main="window=10") + abline( a = LODthresh, b = 0, lty="dashed")
+
+plot(scan.cim.w0, xlim = c(113,160), main="window=0") + abline( a = LODthresh, b = 0, lty="dashed")
+```
+
+Regular interval mapping:
+```{r}
+phenoGeno_calc.s1 <- calc.genoprob(phenoGeno, step=1, off.end=0.0, error.prob=1.0e-4, stepwidth = "fixed", map.function="kosambi")
+
+out.em <- scanone(phenoGeno_calc.s1, method="em") #EM algorithm = standard interval mapping
+
+plot(out.em, scan.cim.w1, xlim=c(110,160), main="CIM and IM for seedling stem diameter") + abline( a = LODthresh, b = 0, lty="dashed")
+
+
+#percent variance explained
+n <- 2951 # = 3008-57
+pve <- 1-(10^((-2/n)*scan.cim.w2$lod))
+```
+
+
+With experimental estimated map positions:
+```{r}
+phenoGeno_estmap <-read.cross(format = "csv", 
+                              file = "phenoGeno_rqtl_nogenpos.csv",  
+                 na.strings= c('NA'), genotypes = c("0","1","2"),
+                 estimate.map = T)
+
+estimatedMap <- phenoGeno_estmap$geno[[1]]$map
+ChanMap <- phenoGeno$geno[[1]]$map
+
+
+estimatedDistances <- c()
+for(i in (1:9)){ estimatedDistances <- c(estimatedDistances, (estimatedMap[i+1] - estimatedMap[i]))}
+
+ChanDistances <- c()
+for(i in (1:9)){ ChanDistances <- c(ChanDistances, (ChanMap[i+1] - ChanMap[i]))}
+
+
+```
+
+
+
+
+
+Plot effect sizes of significant marker(s):
+```{r}
+for (i in nrow(sig_markers)){
+  plotPXG(phenoGeno_cross, pheno.col = 1, marker = rownames(sig_markers)[i], 
+          ylab="stem diameter (mm)")
+}
+
+```
+
+
+Make a QTL model with the significant markers (6 and 8).
+```{r}
+qtl <- makeqtl(phenoGeno_cross, chr=c(1,1), pos= c(143.00,155.20) ,what=c("prob")) 
+
+fitqtl <- fitqtl(phenoGeno, pheno.col= 1, formula = y~Q1+Q2, qtl= qtl, method = "hk", get.ests = T)
+  
+print(summary(fitqtl))
+```
+
+
+
+
+
+
+
+
+## Plant height
+
+Composite interval mapping to scan for plant height QTL. 
+```{r}
+scan.cim.ph = cim(phenoGeno_cross, pheno.col=2, map.function="kosambi")
+```
+
+Perform a permutation test to identify a good LOD threshold corresponding to alpha = 0.05. Identify significant QTL with LOD scores above the threshold.
+```{r}
+#scan.cim.perm.ph = cim(phenoGeno_cross, pheno.col=2, map.function="kosambi", n.perm=1000)
+#summary(scan.cim.perm.ph)
+LODthresh.ph <- 2.539089 
+
+sig_markers.ph  <- summary(scan.cim.ph, threshold = LODthresh.ph)
+
+plot(scan.cim.ph, xlim = c(113,160), ylim=c(0,2.8), main="CIM for seedling height") + abline( a = LODthresh.ph, b = 0, lty="dashed")
+
+print(sig_markers.ph)
+```
+
+
+Plot effect size of significant marker(s).
+```{r}
+for (i in nrow(sig_markers)){
+  plotPXG(phenoGeno_cross, pheno.col = 2, marker = rownames(sig_markers.ph)[i], 
+          ylab="plant height (cm)")
+}
+```
+
+
+Make a QTL model with the significant marker(s).
+```{r}
+for (i in nrow(sig_markers)){
+  
+  qtl.ph <- makeqtl(phenoGeno_cross, chr=1, pos= sig_markers.ph[i,2] ,what=c("prob")) 
+
+  fitqtl.ph <- fitqtl(phenoGeno, pheno.col= 2, formula = y~Q1, qtl= qtl, method = "hk", get.ests = T)
+  
+  print(summary(fitqtl.ph))
+}
+```
+
+
+Identify QTL intervals using LOD drop.
+```{r}
+lodint(results = scan.cim.ph, chr = 1, drop = 1)
+```

@@ -1,0 +1,1266 @@
+---
+title: "Glaziovii_twoyearCET_analysis"
+output: html_document
+date: "2024-09-16"
+---
+
+About:
+Inputs: 
+- genotype data:
+    - 10 KASP markers (positions with respect to ref v7)
+    - ~52k DArtSeqLD markers, imputed, ref v6, filtered MAF > 0.05
+- phenotype data:
+    - 2021 CET data (Ibadan); plant height, stem thickness, and yield
+    - 2022 CET data (Ikenne); standard agronomic traits
+
+
+```{r}
+library(tidyverse)
+library(qtl2)
+library(lme4)
+
+project_path <- "/workdir/ssv42/glazioviiCET/"
+```
+
+
+Read in genotype data
+```{r}
+KASPgenos <- readRDS(paste0(project_path, "SNgenotypes_geno.sum.RDS")) %>%
+  mutate(accession_name = gsub("_.*", "", SubjectID))
+
+#Genetic position information
+#`phenoGeno_rqtl.csv` file contains the 10 Chr. 1 KASP marker genotypes and the cM positions of the markers, taken from Ariel Chan's 2018 genetic map (uplifted from v6 to v7) and formatted according to the rQTL CSV format.
+
+genetic_pos <- read.csv(paste0(project_path, "/phenoGeno_rqtl.csv"), header=T)[1:2,-(1:2)]
+colnames(genetic_pos) <- gsub("X","", colnames(genetic_pos))
+  
+```
+
+Read in full DArTseq genotypes
+```{r, eval=F}
+DArTgenos <- read.table("/workdir/ssv42/glazioviiCET/DosageMatrixAllChrom_RefPanelAndGSprogeny_ReadyForGP_2022Aug03Seren.raw", header=T) %>% 
+  dplyr::select(-c(FID, PAT, MAT, SEX, PHENOTYPE)) %>%
+  dplyr::select(IID, # Filter SNPs by MAF > 0.05
+    where(~ { is.numeric(.x) && 
+        (sum(.x) / (2 * length(.x))) > 0.05  && # Calculate AF and filter 
+        (sum(.x) / (2 * length(.x))) < 0.95 }) ) %>%
+  mutate(germplasmName = as.factor(gsub(".*[...]", "", IID))) 
+
+
+dim(DArTgenos)
+#435 x 52230
+                        
+DArTgenos$germplasmName <- as.factor(gsub(".*[...]", "", DArTgenos$IID)) #extract accession name factor
+
+```
+
+Confirm that introgression status seems to match KASP markers:
+```{r}
+rownames(DArTgenos) <- DArTgenos$IID
+DArTgenos_t <- t(DArTgenos %>% dplyr::select(-c(IID, germplasmName))) %>% as.data.frame() %>%
+  rownames_to_column(var="SNP_ID") %>%
+  separate(SNP_ID, into = c("chr", "position", "allele"), sep = "_", remove = FALSE) %>%
+  mutate(chr = gsub("S", "", chr))
+
+# PCA of chr. 1 second half DArT data
+DArTgenos_t_chr1 <- DArTgenos_t %>% filter(chr == "1" & as.numeric(position) > 23500000) #v6 coordinate
+PCA_chr1 <- prcomp(t(DArTgenos_t_chr1[,-c(1:4)]))
+PCA_chr1_df <- as.data.frame(PCA_chr1$x)[,1:10] #pull first 10 PCs
+PCA_chr1_df$germplasmName <- gsub(".*[...]", "", rownames(PCA_chr1_df))
+PCA_chr1_df$DARTID <- rownames(PCA_chr1_df)
+
+
+# join DArT chr. 1 first 10 PCs with KASP data
+PCA_chr1_KASP <- full_join(PCA_chr1_df, KASPgenos, by=c("germplasmName" = "accession_name"))
+#subsetted for individuals with both DART and KASP
+saveRDS(PCA_chr1_KASP, file=paste0(project_path, "output/PCA_chr1_KASP.RDS"))
+```
+```{r}
+PCA_chr1_KASP <- readRDS(file=paste0(project_path, "output/PCA_chr1_KASP.RDS"))
+
+#identify KASP marker duplicates that could be resolved with DART PCs:
+dup_names <- PCA_chr1_KASP$germplasmName[duplicated(PCA_chr1_KASP$germplasmName) & 
+                                          !is.na(PCA_chr1_KASP$'27643909')]
+dup_genos <- PCA_chr1_KASP %>% filter(germplasmName %in% dup_names) #3 accessions have duplicates, 1 is mismatched
+mismatch_KASP_genos <- dup_genos %>% 
+  group_by(germplasmName) %>% filter(any(c_across('27643909':'39131171') != first(c_across('27643909':'39131171')))) %>%
+  ungroup()
+
+
+# see if there is separation of clusters based on introgression status
+ggplot(PCA_chr1_KASP %>% filter(!is.na(row_sum)), aes(PC1, PC2, color=row_sum)) +
+  geom_point() +
+  guides(color=guide_legend("number of glaziovii KASP alleles")) +
+  ggtitle("Principal component analysis of DArTseq markers in chr. 1 introgression region")
+
+# highlight duplicated accession to determine which KASP genotype is correct: 
+ggplot(PCA_chr1_KASP, aes(PC1, PC2, color=row_sum)) +
+  geom_point() +
+  geom_point(data = PCA_chr1_KASP %>% filter(germplasmName %in% mismatch_KASP_genos$germplasmName), color="orange") +
+  geom_text(data = PCA_chr1_KASP %>% filter(germplasmName %in% mismatch_KASP_genos$germplasmName), 
+            aes(label = germplasmName), vjust=-1, hjust=0.5) 
+
+#TMS21F1987P0009 is likely to be half heterozygous introgressed based on position in PC plot
+#all other KASP mismatching duplicates do not have DART data and so cannot be resolved
+
+#drop likely incorrect duplicates from KASP data
+KASPgenos_dedup <- KASPgenos %>% 
+  #drop incorrect dup that could be resolved
+  filter(!(accession_name == "TMS21F1987P0009" & row_sum=="0" )) %>% 
+  #drop mismatches that couldn't be resolved
+  filter( !(accession_name %in% mismatch_KASP_genos$germplasmName & accession_name !="TMS21F1987P0009")) %>%
+  #drop the second of any remaining identical duplicates 
+  filter(! duplicated(accession_name)) 
+
+saveRDS(KASPgenos_dedup, file=paste0(project_path, "data/KASPgenos_dedup.RDS"))
+
+
+#identify DART marker duplicates that could be resolved with KASP markers:
+dupDART <- PCA_chr1_KASP %>% filter(!is.na(PC1) & germplasmName %in% DArTgenos$germplasmName[duplicated(DArTgenos$germplasmName)])
+# mismatch_PCA_genos <- PCA_chr1_KASP %>% filter(germplasmName %in% dupinDART)  %>%
+#   group_by(germplasmName) %>% filter(any(across('27643909':'39131171', ~ . != first(.)))) %>%
+#   ungroup()
+
+#highlight duplicates
+ ggplot(PCA_chr1_KASP, aes(PC1, PC2)) +
+  geom_point() +
+  geom_point(data = dupDART, aes(color=germplasmName)) +
+  geom_text(data = dupDART, 
+            aes(label = germplasmName), vjust=-1, hjust=0.5) 
+#TMS18F1279P0006 is non-introgressed based on KASP data, so DART sample with high PC1 values should be removed
+#TMEB419s are basically identical so fine to remove second duplicate at random
+
+#drop duplicates from DART data
+DArTgenos_dedup <- DArTgenos %>% filter(IID != "TMS18F1279P0006.A41390...TMS18F1279P0006") %>%
+  filter(!duplicated(germplasmName))
+saveRDS(DArTgenos_dedup, file= paste0(project_path, "data/DArTgenos_dedup.RDS"))
+```
+
+Color PC biplots by KASP marker
+```{r}
+PCA_chr1_KASP_long <- pivot_longer(PCA_chr1_KASP %>% filter(!is.na(row_sum)), cols = '27643909':'39131171', 
+                                   names_to="marker_position", values_to="marker_genotype") %>%
+  filter(!is.na(marker_genotype))
+
+ggplot(PCA_chr1_KASP_long, aes(PC1, PC2, color=as.factor(marker_genotype))) +
+    geom_point() +
+    facet_wrap(~ marker_position, nrow=2) +
+    guides(color=guide_legend("KASP glaz allele dosage")) +
+    ggtitle("Principal component analysis of DArTseq markers in chr. 1 introgression region")
+
+ggsave(file=paste0(project_path, "figures/PCA_chr1_KASP_facets.png"), width=16, height=6)
+  
+```
+
+Make a 3D PC plot:
+```{r}
+plotly::plot_ly(PCA_chr1_KASP %>% filter(!is.na(row_sum) & !is.na(Status)), 
+             x = ~PC1, y = ~PC2, z = ~PC3, 
+             color = ~row_sum, 
+             type = 'scatter3d', mode = 'markers') 
+```
+It doesn't look like there are any obvious outliers in the KASP data.
+
+
+PCA of non-chr 1 markers to account for population structure in CIM:
+```{r}
+#remake with deduplicated DART data
+DArTgenos_t <- t(DArTgenos_dedup %>% dplyr::select(-c(IID, germplasmName))) %>% as.data.frame() %>%
+  rownames_to_column(var="SNP_ID") %>%
+  separate(SNP_ID, into = c("chr", "position", "allele"), sep = "_", remove = FALSE) %>%
+  mutate(chr = gsub("S", "", chr))
+
+# PCA of non - chr. 1 DArT data
+DArTgenos_t_LOCO <- DArTgenos_t %>% filter(chr != "1")
+PCA_LOCO <- prcomp(t(DArTgenos_t_LOCO[,-c(1:4)]))
+PCA_LOCO_df <- as.data.frame(PCA_LOCO$x)[,1:10] #pull first 10 PCs
+PCA_LOCO_df$germplasmName <- gsub(".*[...]", "", rownames(PCA_LOCO_df))
+PCA_LOCO_df <- PCA_LOCO_df %>% filter(!duplicated(germplasmName))
+saveRDS(PCA_LOCO_df, file=paste0(project_path, "output/PCA_Dart_LOCO1.RDS"))
+
+
+# PCA of chr.1, first half of chromosome in non-introgression region
+DArTgenos_t_chr1_nonC1GI <- DArTgenos_t %>% filter(chr == "1" & as.numeric(position) < 23500000) #v6 coordinate
+PCA_chr1_nonC1GI <- prcomp(t(DArTgenos_t_chr1_nonC1GI[,-c(1:4)]))
+PCA_chr1_nonC1GI_df <- as.data.frame(PCA_chr1_nonC1GI$x)[,1:10] #pull first 10 PCs
+PCA_chr1_nonC1GI_df$germplasmName <- gsub(".*[...]", "", rownames(PCA_chr1_nonC1GI_df))
+PCA_chr1_nonC1GI_df$DARTID <- rownames(PCA_chr1_nonC1GI_df)
+rownames(PCA_chr1_nonC1GI_df) <- PCA_chr1_nonC1GI_df$germplasmName
+
+saveRDS(PCA_chr1_nonC1GI_df, file=paste0(project_path, "output/PCA_Dart_Chr1_nonC1GI.RDS"))
+```
+
+
+
+
+
+Read in CET & PYT phenotype data:
+trial #1 = 21.GS.C5.CE.STUDENT2.IB (21.GS.C5.CE.1600.IB)
+trial #2 = 22.GS.C6.STUDENT2_SEREN.CE.500.IK
+trial #3 = 23.GS.C6.SEREN.PYT.50.IB
+trial #4 = 23.GS.C6.SEREN.PYT.50.IK 
+
+Read in all trial data from Cassavabase 
+```{r echo=F}
+#Cassavabase download of `glaziovii-mapping-trials` list
+allCBtrialdata <- read.csv(file=paste0(project_path, "data/2024-10-02T162110phenotype_download.csv")) %>%
+  filter(studyName != "21.GS.C5.CE.1600.IB_Obs") #exclude empty trial dataset
+
+accession_list <- allCBtrialdata %>% filter(studyName == "22.GS.C6.STUDENT2_SEREN.CE.500.IK") %>% dplyr::select("germplasmName") %>% unique()
+
+CBtrialdata <- allCBtrialdata %>% filter(germplasmName %in% accession_list$germplasmName) %>%
+  mutate(TrialType = case_when( grepl("CE", studyName) ~ "CET", grepl("PYT", studyName) ~ "PYT", T ~ NA )) %>%
+  mutate(across(c(locationName, studyName, studyYear, blockNumber, TrialType, germplasmName, replicate), as.factor))
+```
+
+Clean & curate CB data
+```{r}
+#define trait abbreviations
+traitabbrevs <- tribble(~TraitAbbrev,~TraitName,
+        "CMD1S","cassava.mosaic.disease.severity.1.month.evaluation.CO_334.0000191",
+        "CMD3S","cassava.mosaic.disease.severity.3.month.evaluation.CO_334.0000192",
+        "CMD6S","cassava.mosaic.disease.severity.6.month.evaluation.CO_334.0000194",
+        "CMD9S","cassava.mosaic.disease.severity.9.month.evaluation.CO_334.0000193",
+        "CGM","Cassava.green.mite.severity.CO_334.0000033",
+        "CGMS1","cassava.green.mite.severity.first.evaluation.CO_334.0000189",
+        "CGMS2","cassava.green.mite.severity.second.evaluation.CO_334.0000190",
+        "DM","dry.matter.content.percentage.CO_334.0000092",
+        "RTWT","fresh.storage.root.weight.per.plot.CO_334.0000012",
+        "RTNO","root.number.per.plot.counting.CO_334.0000011",
+        "TC","total.carotenoid.by.chart.1.8.CO_334.0000161",
+        "LCHROMO","L.chromometer.value.CO_334.0002065",
+        "ACHROMO","a.chromometer.value.CO_334.0002066",
+        "BCHROMO","b.chromometer.value.CO_334.0002064",
+        "NOHAV","plant.stands.harvested.counting.CO_334.0000010",
+        "CBB3I", "cassava.bacterial.blight.incidence.3.month.evaluation.CO_334.0000178",
+        "CBB3S", "cassava.bacterial.blight.severity.3.month.evaluation.CO_334.0000175" ,
+        "CMD1I",  "cassava.mosaic.disease.incidence.1.month.evaluation.CO_334.0000195", 
+        "CMD3I",  "cassava.mosaic.disease.incidence.3.month.evaluation.CO_334.0000196",
+        "LFSHP",  "central.leaf.shape.visual.rating.1.10.CO_334.0000119", 
+        "VIGOR", "initial.vigor.assessment.1.7.CO_334.0000009",
+        "ARCH", "plant.architecture.visual.rating.1.5.CO_334.0000099",
+        "PLTSHP", "plant.shape.visual.assessment.1.4.CO_334.0000264",
+        "LODGE", "proportion.lodged.plants.in.percentage.CO_334.0000094",
+        "RTROT", "rotted.storage.root.counting.CO_334.0000084" ,
+        "SPRTCT1", "sprout.count.at.one.month.CO_334.0000213",
+        "SPRTCT3", "sprout.count.at.three.month.CO_334.0000214",
+        "SPROUT" , "sprouting.proportion.CO_334.0000008",
+          "PUBESEVERITY3" , "apical.pubescence.visual.rating.0.2.CO_334.0000309",
+          "APICOL3" , "unexpanded.apical.leaf.color.visual.rating.1.9.CO_334.0000101",
+          "PETCOL3" , "petiole.color.visual.rating.1.9.CO_334.0000023",
+          "LCOL3" , "first.fully.expanded.leaf.color.visual.rating.1.9.CO_334.0000102",
+          "PLTHT6MAP ", "plant.height.measurement.in.cm.month.6.COMP.0000081",
+          "PLTHT9MAP" , "plant.height.measurement.in.cm.month.9.COMP.0000082",
+          "PLTHT", "plant.height.measurement.in.cm.CO_334.0000018",
+          "BRNHT6MAP" , "first.apical.branch.height.measurement.in.cm.month.6.COMP.0000083",
+          "BRNHT" , "first.apical.branch.height.measurement.in.cm.CO_334.0000106",
+          "STEMGIRTH6MAP" , "stem.diameter.measurement.in.cm.month.6.COMP.0000130",
+          "STEMGIRTH9MAP", "stem.diameter.measurement.in.cm.month.9.",
+          "LVBR6MAP" , "branching.level.counting.month.6.COMP.0000151", 
+          "LVBR", "branching.level.counting.CO_334.0000079", 
+          "STGRN", "staygreen.visual.scale.1.9.CO_334.0000224", 
+          "RTSZ" , "storage.root.size.visual.rating.1.7.CO_334.0000019",
+          "RTSHP16" , "storage.root.shape.visual.rating.1.6.CO_334.0000020", 
+          "RTINNCOL", "storage.root.cortex.color.visual.rating.1.4.CO_334.0000115",
+          "PLPCOL" , "storage.root.pulp.color.visual.rating.1.3.CO_334.0000021",
+          "NKLGT" , "root.neck.length.visual.rating.0.7.CO_334.0000022", 
+          "EASEPL" , "ease.of.peeling.root.cortex.visual.rating.1.3.CO_334.0000308",
+          "SHTWT", "fresh.shoot.weight.measurement.in.kg.per.plot.CO_334.0000016", 
+          "FYLD", "fresh.root.yield.CO_334.0000013", #ton/ha
+          "DMSG", "dry.matter.content.by.specific.gravity.method.CO_334.0000160",
+          "DYLD" , "dry.yield.CO_334.0000014", #ton/ha
+          "TYLD" , "top.yield.CO_334.0000017", #ton/ha weight of shoots & foliage
+          "HI" , "harvest.index.variable.CO_334.0000015",
+          "L" , "L.chromometer.of.fresh.root.CO_334.0002065",
+          "A", "A.chromometer.value.of.fresh.root.CO_334.0002066",
+          "B" , "B.chromometer.value.of.fresh.root.CO_334.0002064")
+
+#Select only traits of interest & drop the rest of the variables, scale by plant stand number
+CBdata <- genomicMateSelectR::renameAndSelectCols(traitabbrevs, indata=CBtrialdata, 
+                              customColsToKeep = c("TrialType", "observationUnitName")) %>% 
+  mutate(NOHAV = case_when(is.na(NOHAV) & TrialType == "CET" ~ 5, #fill in any NAs with typical plant stand num
+                           is.na(NOHAV) & TrialType == "PYT" ~ 10, T ~ NOHAV)) %>%
+  mutate(EXPNOHAV = case_when(TrialType == "CET" ~ 5, TrialType == "PYT" ~ 10)) %>%
+  mutate(across(c(RTWT, RTNO, SHTWT), ~ .x * (EXPNOHAV/NOHAV))) %>% #adjust plot-level traits if fewer plants harvested
+  mutate(RTROT = RTROT / RTNO) %>% #transform to proportion rotted
+  mutate(DM = case_when(is.na(DM) & !is.na(DMSG) ~ DMSG, T ~ DM)) %>% #fill in missing DM with DMSG from Ikenne PYT
+  as.data.frame()
+  
+```
+
+
+Read in vigor data from across years and pivot to longer format to account for replicates measurements within plots
+```{r}
+#CET year 1 vigor data
+vigor_data <- read.csv(paste0(project_path, "PedigreeValidation/CET_Dec2021/CET2021_stem_architecture_data_all.csv")) %>%
+  filter(!is.na(stem.diameter.measurement.in.cm.month.6.COMP.0000130)) %>%
+  dplyr::select(1:6, 12:19, 22:23) %>% #rename long trait names
+  rename(observationUnitName = plot_name,
+         observationUnitDbId = plot_id,
+         plotNumber = plot_number,
+         blockNumber = block_number,
+         STEMGIRTH1_6MAP = stem.diameter.measurement.in.cm.month.6.COMP.0000130, 
+         STEMGIRTH2_6MAP = Stem.Diameter.Rep2,
+         STEMGIRTH3_6MAP = Stem.Diameter.Rep3,
+         BRNCHHBT = branching.habit.visual.observation.1.4.CO_334.0000140,
+         BRLVLS = branching.level.counting..CO_334.0000079,
+         RTROT.me = rotted.storage.root.counting.CO_334.0000084) %>%
+  mutate(studyYear = 2022, locationName="Ibadan", germplasmName = accession_name) %>%
+  mutate(YEAR_HARVEST = studyYear, LOCATION = locationName, ACCESSION_NAME = accession_name, PLOT_NUMBER = plotNumber)
+
+
+harvest_data1 <- read.csv(paste0(project_path, "HarvestData_21.GS.C5.CE.STUDENT2.IB_Curated.csv"))
+
+harvest_data2 <- read.csv(paste0(project_path, "22.GS.C6.STUDENT2_SEREN.CE.500.IK_Curated.csv")) %>%
+  rename( SPROUT = sprouting.proportion.CO_334.0000008,
+          SPRTCT1 = sprout.count.at.one.month.CO_334.0000213,
+          SPRTCT3 = sprout.count.at.three.month.CO_334.0000214,
+          VIGOR = initial.vigor.assessment.1.7.CO_334.0000009,
+          CMD1S = cassava.mosaic.disease.severity.1.month.evaluation.CO_334.0000191,
+          CMD1I = cassava.mosaic.disease.severity.3.month.evaluation.CO_334.0000192,
+          CMD3I = cassava.mosaic.disease.incidence.1.month.evaluation.CO_334.0000195,
+          CMD3S = cassava.mosaic.disease.incidence.3.month.evaluation.CO_334.0000196,
+          CBB3S = cassava.bacterial.blight.severity.3.month.evaluation.CO_334.0000175,
+          CBB3I = cassava.bacterial.blight.incidence.3.month.evaluation.CO_334.0000178,
+          PUBESEVERITY3 = apical.pubescence.visual.rating.0.2.CO_334.0000309,
+          APICOL3 = unexpanded.apical.leaf.color.visual.rating.1.9.CO_334.0000101,
+          PETCOL3 = petiole.color.visual.rating.1.9.CO_334.0000023,
+          LCOL3 = first.fully.expanded.leaf.color.visual.rating.1.9.CO_334.0000102,
+          LFSHP3 = central.leaf.shape.visual.rating.1.10.CO_334.0000119, 
+          PLTHT6MAP = plant.height.measurement.in.cm.month.6.COMP.0000081,
+          PLTHT9MAP = plant.height.measurement.in.cm.month.9.COMP.0000082,
+          BRNHT6MAP = first.apical.branch.height.measurement.in.cm.month.6.COMP.0000083,
+          BRNHT9MAP = first.apical.branch.height.measurement.in.cm.month.9.,
+          STEMGIRTH6MAP = stem.diameter.measurement.in.cm.month.6.COMP.0000130,
+          STEMGIRTH9MAP= stem.diameter.measurement.in.cm.month.9.,
+          LVBR6MAP = branching.level.counting.month.6.COMP.0000151, 
+          LVBR9MAP = branching.level.counting.month.9., 
+          PLTSHP = plant.shape.visual.assessment.1.4.CO_334.0000264, 
+          STGRN = staygreen.visual.scale.1.9.CO_334.0000224, 
+          LODGE = proportion.lodged.plants.in.percentage.CO_334.0000094,
+          NOHAV = plant.stands.harvested.counting.CO_334.0000010, 
+          RTNO = root.number.counting.CO_334.0000011,
+          RTROT = rotted.storage.root.counting.CO_334.0000084,
+          RTSZ = storage.root.size.visual.rating.1.7.CO_334.0000019,
+          RTSHP = storage.root.shape.visual.rating.1.4.CO_334.0000020,
+          RTOUTCOL = storage.root.periderm.color.visual.rating.1.4.CO_334.0000064, 
+          RTINNCOL= storage.root.cortex.color.visual.rating.1.4.CO_334.0000115,
+          PLPCOL = storage.root.pulp.color.visual.rating.1.3.CO_334.0000021,
+          TC = total.carotenoid.by.chart.1.8.CO_334.0000161, 
+          NKLGT = root.neck.length.visual.rating.0.7.CO_334.0000022, 
+          EASEPL = ease.of.peeling.root.cortex.visual.rating.1.3.CO_334.0000308,
+          SHTWT = fresh.shoot.weight.measurement.in.kg.CO_334.0000016, 
+          RTWT = fresh.root.weight.CO_334.0000012, 
+          FYLD = fresh.root.yield.CO_334.0000013,
+          DM = dry.matter.content.percentage.CO_334.0000092,
+          DYLD = dry.yield.CO_334.0000014, 
+          TYLD = top.yield.CO_334.0000017, 
+          HI = harvest.index.variable.CO_334.0000015,
+          L = L.chromometer.value.CO_334.0002065,
+          A = a.chromometer.value.CO_334.0002066,
+          B = b.chromometer.value.CO_334.0002064)
+
+
+all_vigor_phenotypes <- full_join(harvest_data1, vigor_data, by = join_by(YEAR_HARVEST, LOCATION, ACCESSION_NAME, PLOT_NUMBER)) %>%
+  full_join(harvest_data2) %>%
+  rename(PLTHT1_3MAP = PLTHT1,
+         PLTHT2_3MAP = PLTHT2,
+         PLTHT3_3MAP = PLTHT3,
+         PLTHT4_8MAP = PLTHT4,
+         PLTHT5_8MAP = PLTHT5,
+         PLTHT6_8MAP = PLTHT6,
+         BRNHT1_3MAP = BRNHT1,
+         BRNHT2_3MAP = BRNHT2,
+         BRNHT3_3MAP = BRNHT3,
+         BRNHT4_8MAP = BRNHT4,
+         BRNHT5_8MAP = BRNHT5,
+         BRNHT6_8MAP = BRNHT6,
+         LVBRH4_8MAP = LVBRH4,
+         LVBRH5_8MAP = LVBRH5,
+         LVBRH6_8MAP = LVBRH6,
+         STEMGIRTH4_8MAP = STEMGIRTH4,
+         STEMGIRTH5_8MAP =STEMGIRTH5,
+         STEMGIRTH6_8MAP =STEMGIRTH6) %>%
+  #change to official names for consistency with CB dataset
+  mutate(locationName = LOCATION, blockNumber = as.factor(BLOCK_NUMBER), germplasmName = as.factor(ACCESSION_NAME), 
+         observationUnitName = PLOT_NAME, studyYear = YEAR_HARVEST, studyName = TRIAL) 
+  # %>% # commented out since not using agronomic traits from these dataset
+  # #fill NAs for plant stand num with default
+  # mutate(NOHAV = case_when(is.na(NOHAV) ~ 5, T ~ NOHAV)) %>%
+  # #scale plot-level traits by number of plants 
+  # mutate(across(c(), ~ .x / NOHAV))
+
+
+replicated_traits <- c("STEMGIRTH._.MAP", "PLTHT._.MAP", "BRNHT._.MAP", "LVBRH._.MAP")
+
+vigor_phenotypes_long <- pivot_longer(all_vigor_phenotypes %>% dplyr::select(matches(replicated_traits), 
+                           observationUnitName, germplasmName, blockNumber, locationName, studyName, studyYear),
+                                           cols = matches(replicated_traits),
+                                           names_to = c("trait", "replicate", "MAP"),
+                                           names_pattern = "(.*)([0-9]+)_(.MAP)",
+                                           values_to = "value") %>%
+  mutate(trait = paste(trait, MAP, sep="_")) %>% dplyr::select(-MAP) %>%
+  pivot_wider(names_from = "trait", values_from = "value") %>%
+  mutate(across(c(studyName, blockNumber, germplasmName, studyYear, locationName), as.factor)) %>%
+  as.data.frame()
+
+
+vigor_phenotypes_longer <- pivot_longer(all_vigor_phenotypes %>% dplyr::select(matches(replicated_traits), 
+                           observationUnitName, germplasmName, blockNumber, locationName, studyName, studyYear),
+                                           cols = matches(replicated_traits),
+                                           names_to = c("trait", "replicate", "MAP"),
+                                           names_pattern = "(.*)([0-9]+)_(.)MAP",
+                                           values_to = "value") %>%
+  mutate(across(c(studyName, blockNumber, germplasmName, studyYear, locationName, MAP, observationUnitName), as.factor)) %>%
+  as.data.frame()
+
+
+
+#sample sizes for the different time points:
+# table(vigor_phenotypes_long %>% filter(!is.na(STEMGIRTH_6MAP)) %>% dplyr::select(studyName))
+# table(vigor_phenotypes_long %>% filter(!is.na(STEMGIRTH_8MAP)) %>% dplyr::select(studyName))
+# table(vigor_phenotypes_long %>% filter(!is.na(STEMGIRTH_9MAP)) %>% dplyr::select(studyName))
+#IB trial has 6 & 8 MAP, IK trial has 6 & 9 MAP
+
+```
+
+
+Calculate BLUPs for agronomic traits
+```{r}
+categoricaltraitlist <- c("LFSHP", "ARCH", "PLTSHP", "APICOL3", "PETCOL3", "LCOL3", "RTSHP16","RTINNCOL", "PLPCOL")
+
+agronomictraitlist <- colnames(CBdata %>% dplyr::select(CMD1S:B) %>%
+        dplyr::select(!any_of(categoricaltraitlist)) %>%
+        dplyr::select(!contains("PLTHT") & !contains("LVBR") & !contains("SPRTCT") & !contains("BRNHT") & !contains("STEMG")) %>%
+          dplyr::select(-c("NOHAV", "STGRN", "DMSG"))) #these models didn't fit
+
+BLUPs_df <- data.frame(germplasmName = unique(CBdata$germplasmName))
+H2_storage <- data.frame()
+
+for(i in seq_along(agronomictraitlist)){
+  #get trait
+  traiti <- agronomictraitlist[i]
+  print(traiti)
+  
+  modeldata <- as.data.frame(CBdata)
+  #pick yield or vigor dataframe depending on the trait if including vigor traits too
+  #if(traiti %in% vigortraitlist){modeldata <- vigor_phenotypes_long} 
+  #if(traiti %in% agronomictraitlist) {modeldata <- as.data.frame(CBdata)}
+  
+  #check if numeric
+  if(is.numeric(modeldata[,traiti])){
+    
+    #check whether trait was observed across multiple locations and years
+    nlocs <- length(table( modeldata[which(!is.na(modeldata[,traiti])), "locationName"] ))
+    nyears <- length(table( modeldata[which(!is.na(modeldata[,traiti])), "studyYear"] ))
+    
+    #attempt to fit a linear model
+    #use model with location/year effects if there are multiple locations/years
+      if(nlocs > 1 & nyears > 1){
+        trymodelfit <- tryCatch(
+          
+       traiti_mod <- asreml(data=modeldata,
+              fixed = formula(paste0( traiti , "~ 1 + locationName + studyYear")),
+              random = ~ studyName:blockNumber + germplasmName,
+              residual = ~ dsum(~units | TrialType)),
+              
+       error=function(e) e)  }
+    
+    #omit location/year effects if only observed in one location or year
+     # if(nlocs == 1 | nyears == 1){
+     #  trymodelfit <- tryCatch(
+     # 
+     #   traiti_mod <- asreml(data=modeldata,
+     #          fixed = formula(paste0( traiti , "~ 1")),
+     #          random = ~ blockNumber + germplasmName,
+     #          residual = ~ units),
+     #   traiti_mod <- update.asreml(traiti_mod),
+     #   
+     #   error=function(e) e) }
+    
+    #extract and save the BLUPs if the model successfully fit
+      if(!inherits(trymodelfit, "error") && class(trymodelfit) == "asreml"){
+     
+        traiti_mod <- update.asreml(traiti_mod) #give it a couple more iterations
+        
+        #extract and de-regress BLUPs
+        randomeffs <- summary(traiti_mod, coef=TRUE)$coef.random
+        Vg <-  summary(traiti_mod)$varcomp["germplasmName", "component"]
+    
+        BLUPs_i <- randomeffs[grepl('germplasmName', rownames(randomeffs)), ] %>%
+      as.data.frame() %>% 
+      mutate(PEV=std.error^2, 
+             REL=1-(PEV/Vg),
+             drgBLUP=solution/REL) %>% #de-regress BLUPs
+      mutate(germplasmName = gsub("germplasmName_","",rownames(.)))
+      
+    
+      BLUPs_tostore <- BLUPs_i %>% dplyr::select(germplasmName, drgBLUP) %>%
+        rename_with(~ paste0(traiti), drgBLUP)
+      
+      BLUPs_df <- left_join(BLUPs_df, BLUPs_tostore, by="germplasmName")
+      
+      #calculate H2
+      #inverse-variance weighting of residual errors
+      VCET <- (summary(traiti_mod)$varcomp["TrialType_CET!R", 1]) / (1*2) #1 plot, 2 location reps
+      VCETv <- (summary(traiti_mod)$varcomp["TrialType_CET!R", 2])^2
+      VPYT <- (summary(traiti_mod)$varcomp["TrialType_PYT!R", 1]) / (2*2) #2 plot reps, 2 location reps
+      VPYTv <- (summary(traiti_mod)$varcomp["TrialType_PYT!R", 2])^2
+      VRweightedavg <- sum(VCET/VCETv, VPYT/VPYTv) / sum( 1/VCETv, 1/VPYTv )
+      
+      H2_i <- Vg / sum(Vg , VRweightedavg)
+      H2_storage <- rbind(H2_storage, cbind(traiti, H2_i))
+  
+      } #end save BLUPs
+  }#end if numeric
+}#end trait
+
+
+saveRDS(BLUPs_df, file=paste0(project_path, "output/Agronomic_drgBLUPs.RDS"))
+saveRDS(H2_storage, file=paste0(project_path, "output/Agronomic_H2.RDS"))
+```
+
+
+
+Calculate BLUPs for vigor traits with repeated measures:
+
+```{r}
+tmptfixed_SG_model <- asreml(data= (vigor_phenotypes_longer %>% filter(trait == "STEMGIRTH")),
+              fixed = value ~ 1 + locationName + MAP,
+              random = ~ studyName:blockNumber + germplasmName + germplasmName:MAP + observationUnitName,
+              residual = ~ units)
+
+tmptfixed_PH_model <- asreml(data= (vigor_phenotypes_longer %>% filter(trait == "PLTHT")),
+              fixed = value ~ 1 + locationName + MAP,
+              random = ~ studyName:blockNumber + germplasmName + germplasmName:MAP + observationUnitName,
+              residual = ~ units)
+```
+
+
+Extract and de-regress vigor BLUPs, calculate H2, and join with agronomic BLUPs dataframe
+```{r}
+#stem girth de-regress BLUPs
+tmptfixed_SG_drgBLUPs <- summary(tmptfixed_SG_model, coef=T)$coef.random %>% as.data.frame() %>%
+  rownames_to_column(var = "ranef") %>%
+  filter(grepl("germplasmName", ranef) & !grepl(":MAP_" , ranef)) %>%
+  mutate(germplasmName = gsub("germplasmName_", "", ranef), 
+         PEV = std.error^2,
+         REL = 1 - (PEV / (summary(tmptfixed_SG_model)$varcomp["germplasmName", 1])), #Vg 
+         drgBLUP = solution/REL) %>%
+  dplyr::select(germplasmName, drgBLUP) %>%
+  rename(STEMGIRTH = drgBLUP)
+
+#stem girth heritability
+Vg <- summary(tmptfixed_SG_model)$varcomp["germplasmName", 1]
+Vplot <- summary(tmptfixed_SG_model)$varcomp["observationUnitName", 1]
+Vgxe <- summary(tmptfixed_SG_model)$varcomp["germplasmName:MAP", 1]
+Vr <- summary(tmptfixed_SG_model)$varcomp["units!R", 1]
+SG_H2 <- Vg / ( Vg + Vplot/2 + Vgxe/(2*2) + Vr/(2*2*3) )
+
+
+#plant height de-regress BLUPs
+tmptfixed_PH_drgBLUPs <- summary(tmptfixed_PH_model, coef=T)$coef.random %>% as.data.frame() %>%
+  rownames_to_column(var = "ranef") %>%
+  filter(grepl("germplasmName", ranef) & !grepl(":MAP_" , ranef)) %>%
+  mutate(germplasmName = gsub("germplasmName_", "", ranef), 
+         PEV = std.error^2,
+         REL = 1 - (PEV / (summary(tmptfixed_PH_model)$varcomp["germplasmName", 1])), #Vg 
+         drgBLUP = solution/REL) %>%
+  dplyr::select(germplasmName, drgBLUP) %>%
+  rename(PLTHT = drgBLUP)
+
+#plant height heritability
+Vg <- summary(tmptfixed_PH_model)$varcomp["germplasmName", 1]
+Vplot <- summary(tmptfixed_PH_model)$varcomp["observationUnitName", 1]
+Vgxe <- summary(tmptfixed_PH_model)$varcomp["germplasmName:MAP", 1]
+Vr <- summary(tmptfixed_PH_model)$varcomp["units!R", 1]
+PH_H2 <- Vg / ( Vg + Vplot/2 + Vgxe/(2*2) + Vr/(2*2*3) )
+
+
+BLUPs_df_all <- full_join(BLUPs_df, tmptfixed_SG_drgBLUPs) %>% full_join(tmptfixed_PH_drgBLUPs)
+saveRDS(BLUPs_df_all, file=paste0(project_path, "output/all_agronomic_vigor_drgBLUPs.RDS"))
+
+H2_storage_all <- rbind(H2_storage, c("STEMGIRTH", SG_H2), c("PLHT", PH_H2))
+saveRDS(H2_storage_all, file=paste0(project_path, "output/all_agronomic_vigor_H2.RDS"))
+
+
+H2_storage_all$H2_i <- round(as.numeric(H2_storage_all$H2_i), 3)
+print(H2_storage_all)
+```
+
+
+Join phenotype data with genotype data
+```{r}
+KASPgenos_dedup <- readRDS(file=paste0(project_path, "data/KASPgenos_dedup.RDS"))
+DArTgenos_dedup <- readRDS(file= paste0(project_path, "data/DArTgenos_dedup.RDS"))
+
+
+#glaziovii KASP data
+BLUPs_df_markers <- left_join(BLUPs_df_all, KASPgenos_dedup, by = c("germplasmName" = "accession_name")) %>%
+  filter(! (is.na(SubjectID) & germplasmName %in% DArTgenos_dedup$germplasmName) ) #filter lines with neither kind of genotype data
+
+
+#get DART markers in the C1GI region (capturing diversity within haplotypes)
+DART_C1GIregion_markers <- DArTgenos_t %>% filter(chr == "1" & as.numeric(position) > 23500000) %>% 
+  mutate(SNP_ID = gsub("_[A-Z]$", "", SNP_ID)) %>% 
+  dplyr::select(-c(chr, position, allele)) %>% column_to_rownames("SNP_ID") %>%
+  t() %>% as.data.frame() %>% rownames_to_column("germplasmName") %>%
+  mutate(germplasmName = gsub(".*[...]", "" , germplasmName))
+
+
+BLUPs_df_markers_wC1GIDART <- left_join(BLUPs_df_markers, DART_C1GIregion_markers, by="germplasmName")
+saveRDS(BLUPs_df_markers_wC1GIDART, file=paste0(project_path, "data/BLUPs_df_markers_wC1GIDART.RDS"))
+```
+
+
+Get genetic positions of Dart markers:
+Using genetic map from Chan et al. 2021 uplifted from v6 (DART platform version) to v7 (KASP version)
+(Uplifted 'chr1_cassava_cM_pred.v6_91019.map' using CrossMap with 'Mesculenta_305_v6.to_v7.final.chain')
+```{r}
+chr1mapv6 <- read.table(paste0(project_path, "data/chr1_cassava_cM_pred.v6_91019.map")) %>%
+  setNames(c("chr", "SNPname_v6", "cM", "bp_v6"))
+
+chr1v6tov7 <- read.table(paste0(project_path, "data/chr1map_v7uplifted.bed")) %>%
+  setNames(c("chrom", "bp_v7", "bpplusone_v7", "SNPname_v6")) %>%
+  full_join(chr1mapv6, by="SNPname_v6")
+
+chr1mapv7 <- chr1v6tov7 %>% dplyr::select(chr, bp_v7, cM, SNPname_v6) %>%
+  mutate(SNPname_v7 = paste0("S1_", bp_v7)) %>%
+  filter(!is.na(bp_v7)) %>%
+  filter(!(bp_v7 < 10000000 & cM > 50)) #remove outliers
+saveRDS(chr1mapv7, file=paste0(project_path, "/output/DArTgenos_geneticmap.RDS"))
+
+genetic_pos_Dart_long <- chr1mapv7 %>% filter(SNPname_v6 %in% colnames(BLUPs_df_markers_wC1GIDART)) 
+
+ggplot(chr1mapv7, aes(as.numeric(bp_v7),cM)) +
+  geom_point(col="blue", alpha=0.25, size=0.25) +
+  geom_point(data=t(genetic_pos) %>% as.data.frame %>% rownames_to_column("bp"), 
+             aes(as.numeric(bp), `2`), col="red") +
+  geom_point(data = genetic_pos_Dart_long, aes(bp_v7, cM), color="orange", size=0.5) +
+  xlab("physical position (bp, v7)") + ylab("genetic position (cM)")
+
+
+genetic_pos_Dart <- genetic_pos_Dart_long %>% dplyr::select(SNPname_v6, chr, cM) %>% column_to_rownames("SNPname_v6") %>% 
+  t() %>% as.data.frame()
+
+```
+
+
+Get PCs as covariates for CIM
+```{r}
+PCA_LOCO_df <- readRDS(file=paste0(project_path, "output/PCA_Dart_LOCO1.RDS"))
+rownames(PCA_LOCO_df) <- PCA_LOCO_df$germplasmName
+
+
+PCA_chr1_nonC1GI_df <- readRDS(file=paste0(project_path, "output/PCA_Dart_Chr1_nonC1GI.RDS")) %>%
+  dplyr::select(c(PC1:PC4, germplasmName)) #subset for first 4 PCs
+#rownames(PCA_chr1_nonC1GI_df) <- NULL ; rownames(PCA_chr1_nonC1GI_df) <- PCA_chr1_nonC1GI_df$germplasmName
+
+#commonaccessions <- intersect(PCA_LOCO_df$germplasmName, BLUPs_df_markers_wC1GIDART$germplasmName)
+
+PCcovars <- PCA_LOCO_df %>% filter(germplasmName %in% commonaccessions) %>% left_join(PCA_chr1_nonC1GI_df, by="germplasmName") 
+rownames(PCcovars) <- PCcovars$germplasmName
+```
+
+
+
+## Composite interval mapping (CIM)
+
+Format for composite interval mapping with rQTL:
+Formatting instructions:
+The first line should contain the phenotype names followed by the marker names. At least one phenotype must be included; for example, include a numerical index for each individual. The second line should contain blanks in the phenotype columns, followed by chromosome identifiers for each marker in all other columns. If a chromosome has the identifier X or x, it is assumed to be the X chromosome; otherwise, it is assumed to be an autosome. An optional third line should contain blanks in the phenotype columns, followed by marker positions, in cM. Marker order is taken from the cM positions, if provided; otherwise, it is taken from the column order. Subsequent lines should give the data, with one line for each individual, and with phenotypes followed by genotypes. 
+```{r}
+CET_prerqtl <- BLUPs_df_markers_wC1GIDART %>% 
+  column_to_rownames(var= "germplasmName") %>%
+  dplyr::select(-c(SubjectID, row_sum, Status)) 
+
+#make sure accession names match PCA covariates matrix
+commonaccessions <- intersect(PCcovars$germplasmName, rownames(CET_prerqtl))
+CET_prerqtl <- CET_prerqtl %>% filter(rownames(.) %in% commonaccessions)
+sum(rownames(CET_prerqtl) != rownames(PCcovars)) == 0 #confirm order is the same
+
+#make chromosome name and genetic positions rows for first two lines
+all_genetic_pos <- cbind(genetic_pos, genetic_pos_Dart)
+CET_prerqtl_wgenopos <- plyr::rbind.fill(all_genetic_pos, CET_prerqtl) %>% 
+  dplyr::select(-c(S1_27001906:S1_34941293)) %>% #removing SNPs without genetic position information
+  dplyr::select(CMD1S:PLTHT , `27643909`:S1_33770522)
+CET_prerqtl_wgenopos[1:2, which(is.na(CET_prerqtl_wgenopos[2, ]))] <- "" #replace NAs with blank cells in phenotype columns
+
+write.csv(CET_prerqtl_wgenopos, file=paste0(project_path, "CET_allBLUPs_wC1GIdart_rqtlformat.csv"), row.names=F)
+
+#version without extra chr 1 markers:
+CET_prerqtl_nochr1PCs <- CET_prerqtl_wgenopos %>% dplyr::select(CMD1S:`39131171`)
+write.csv(CET_prerqtl_nochr1PCs, file=paste0(project_path, "CET_allBLUPs_withoutC1GIdart_rqtlformat.csv"), row.names=F)
+
+
+
+CET_rqtl_read <- read.cross(format = "csv", file="CET_allBLUPs_withoutC1GIdart_rqtlformat.csv",
+                               na.strings= c('NA'), genotypes = c("0","1","2"), crosstype="f2")
+
+#CET_rqtl_read_jitter <- jittermap(CET_rqtl_read)
+# summary(CET_rqtl_read_jitter)
+
+#convert to rqtl2 format:
+
+CET_rqtl2_read <- qtl2::convert2cross2(CET_rqtl_read)
+summary(CET_rqtl2_read)
+
+
+#calculate probability of genotype at a QTL (in an interval between two markers)
+CET_rqtl2_calc <- calc_genoprob(CET_rqtl2_read, error_prob=0.002)
+CET_rqtl_calc <- calc.genoprob(CET_rqtl_read, step=0, off.end=0.0, error.prob=1.0e-4, stepwidth = "fixed", map.function="kosambi")
+
+```
+
+
+
+
+CIM for every trait
+```{r}
+traitlist <- colnames(CET_rqtl_calc$pheno)
+
+saveresults <- list()
+saveplots <- list()
+saveqtl <- list()
+
+for(i in seq_along(traitlist)){
+  
+  traiti <- traitlist[i]
+  print(traiti)
+  
+  # CIM for trait i
+  scan.cim.traiti = cim(CET_rqtl_calc, pheno.col= traiti, map.function="kosambi", 
+                        n.marcovar=8, window=20, addcovar=PCcovars %>% dplyr::select(-germplasmName))
+  
+  saveresults[[i]] <- scan.cim.traiti
+  
+  #Default threshold for quick check based on previous simulation run;
+  #more precise threshold set for traits with QTL that pass this quick threshold
+  LODthresh <- 2.5
+  
+  sig_markers  <- summary(scan.cim.traiti, threshold = LODthresh)
+  print(sig_markers)
+  
+
+  # Extract positions of peaks
+  if(nrow(sig_markers) != 0){
+    qtl_pos <- makeqtl(CET_rqtl_calc, 
+                     chr = sig_markers$chr,
+                     pos = sig_markers$pos,
+                     what = "prob")
+  
+    # Fit model to get effects
+    fit <- fitqtl(cross = CET_rqtl_calc, 
+                qtl = qtl_pos, 
+                pheno.col = traiti, 
+                covar = PCcovars %>% dplyr::select(-germplasmName), 
+                method = "hk", get.ests=T)
+    
+    # View estimated effects
+    print(summary(fit))
+    saveqtl[[i]] <- summary(fit)
+    
+    #plot effect sizes
+    effectplot(CET_rqtl_calc, mname1 = rownames(sig_markers), pheno.col = traiti)
+    
+    
+    # Get a more precise LOD threshold corresponding to alpha = 0.05.
+   #  scan.cim.perm = cim(CET_rqtl_calc, pheno.col= traiti, map.function="kosambi",
+   #                       n.marcovar=8, window=2, addcovar=PCcovars %>% #dplyr::select(-germplasmName), n.perm=1000)
+   # LODthresh <- summary(scan.cim.perm)["5%",1]
+  }
+  else{
+    
+    top_markers  <- summary(scan.cim.traiti, threshold = 0)
+    
+    qtl_pos <- makeqtl(cross=CET_rqtl_calc, 
+                     chr = top_markers$chr,
+                     pos = top_markers$pos,
+                     what = "prob")
+  
+    # Fit model to get effects
+    fit <- fitqtl(cross = CET_rqtl_calc, 
+                qtl = qtl_pos, 
+                pheno.col = traiti, 
+                covar = PCcovars %>% dplyr::select(-germplasmName), 
+                method = "hk", get.ests=T)
+    
+    # View estimated effects
+    print(summary(fit))
+    saveqtl[[i]] <- summary(fit)
+    
+    #effectplot(CET_rqtl_calc, mname1 = rownames(top_markers)[1], pheno.col = traiti)
+    
+    }
+
+  
+  traiti_plot <- plot(scan.cim.traiti, 
+                      main=paste0("CIM for ", traiti), xlim = c(113,160)) + 
+    abline( a = LODthresh, b = 0, lty="dashed")
+  saveplots[[i]] <- recordPlot(traiti_plot)
+  print(traiti_plot)
+  
+  png(filename=paste0(project_path, "figures/CIM_", traiti, "_2.png"),
+      width=5, height=4,units="in", res=400)
+  plot(scan.cim.traiti, main=paste0("CIM for ", traiti), xlim = c(113,160)) + 
+    abline( a = LODthresh, b = 0, lty="dashed")
+  dev.off()
+
+}
+
+saveRDS(saveresults, file=paste0(project_path, "output/CIM_results_2.RDS"))
+saveRDS(saveplots, file=paste0(project_path, "output/CIM_results_plots_2.RDS"))
+saveRDS(saveqtl, file=paste0(project_path, "output/CIM_LODsig_qtl_modelresults_2.RDS"))
+
+```
+
+Get significant effect estimates:
+```{r}
+whichtraiti <- which(traitlist == "STEMGIRTH")
+
+saveqtl[[whichtraiti]]
+
+saveresults[[whichtraiti]]
+
+effectplot(CET_rqtl_calc, mname1 = "27643909", pheno.col = "STEMGIRTH",
+           xlab="Glaziovii allele dosage at C1GI marker 1, 27.6 Mbp", main="Effect of glaziovii alleles on STEMGIRTH", col="steelblue", geno1=c("0", "1", "2"))
+
+
+effectplot(CET_rqtl_calc, mname1 = "37123583", pheno.col = "STEMGIRTH",
+           xlab="Glaziovii allele dosage at C1GI marker 8, 37.1 Mbp", main="Effect of glaziovii alleles on STEMGIRTH", col="steelblue", geno1=c("0", "1", "2"))
+
+
+effectplot(CET_rqtl_calc, mname1 = "32865115", pheno.col = "DM",
+           xlab="Glaziovii allele dosage at C1GI marker 5, 32.9 Mbp", main="Effect of glaziovii alleles on DM", col="steelblue", geno1=c("0", "1", "2"))
+
+
+
+effectplot(CET_rqtl_calc, mname1 = "37123583", pheno.col = "FYLD",
+           xlab="Glaziovii allele dosage at C1GI marker 8, 37.1 Mbp", main="Effect of glaziovii alleles on FYLD", col="steelblue", geno1=c("0", "1", "2"))
+```
+
+
+
+
+
+## Linear model method:
+
+Prepare genotype data and genomic relationship matrix with DArT data on all other chromosomes
+```{r}
+#prepare KASP marker coding for additive and dominance effects
+
+#additive effect: {-1, 0, 1} coding 
+Xa <- BLUPs_df_markers %>% dplyr::select(`27643909` : `39131171`) %>%
+  rowwise %>%
+  mutate_all(function(x){x - 1} ) #move from {0,1,2} to {-1,0,1} coding
+colnames(Xa) = c("KASP1_Xa", "KASP2_Xa", "KASP3_Xa", "KASP4_Xa", "KASP5_Xa", "KASP6_Xa" ,"KASP7_Xa", "KASP8_Xa", "KASP9_Xa", "KASP10_Xa")
+
+#dominance effect: {-1 for heterozygote, 1 for homozygote} coding
+Xd <- BLUPs_df_markers %>% dplyr::select(`27643909` : `39131171`) %>%
+  rowwise %>%
+  mutate_all(function(x){1-2*abs(x - 1)} ) #Xd is 1-2*abs(xa) 
+colnames(Xd) <- c("KASP1_Xd", "KASP2_Xd", "KASP3_Xd", "KASP4_Xd", "KASP5_Xd", "KASP6_Xd" ,"KASP7_Xd", "KASP8_Xd", "KASP9_Xd", "KASP10_Xd")
+
+
+#Merge X matrices:
+BLUPs_df_markers_ad <- cbind(BLUPs_df_markers, Xa, Xd) %>%
+  filter(!is.na(`27643909`)) %>% #remove un-genotyped accessions and duplicate
+  filter(!duplicated(germplasmName)) %>%
+  mutate(germplasmName = as.factor(germplasmName)) 
+```
+
+Calculate genomic relationship matrix for rest-of-genome
+```{r, eval=F}
+## Make GRM
+# remove chr 1 markers and format genotype data 
+DArTgenos_LOCO <- DArTgenos_t %>% filter(chr != "1") %>% 
+  dplyr::select(-c(SNP_ID, chr, position, allele)) %>% t() %>% as.data.frame() %>%
+  mutate(germplasmName = make.unique(gsub(".*[...]", "", rownames(.)))) %>% ##get accession names
+  right_join(BLUPs_df_markers_ad %>% dplyr::select(germplasmName)) %>% #subset and order accessions to match BLUP data
+  column_to_rownames(var="germplasmName")
+
+
+# calculate the additive genomic relationship matrix with rrBLUP
+GRM_LOC1 <- rrBLUP::A.mat(DArTgenos_LOCO - 1) #subtract 1 so coding is {-1, 0, 1}
+
+# tune, invert and save as sparse version
+GRM_LOC1_bend <- ASRgenomics::G.tuneup(GRM_LOC1, bend=T)$Gb
+GLOC1_inv <- ASRgenomics::G.inverse(GRM_LOC1_bend, sparseform=T)$Ginv.sparse
+saveRDS(GLOC1_inv, file=paste0(project_path, "output/Gmatrix_chr1leftout_bend_inv_sparse.RDS"))
+```
+
+
+Fit a linear model for each KASP marker:
+```{r}
+#read in Ginverse matrix
+GLOC1_inv <- readRDS(file = paste0(project_path, "output/Gmatrix_chr1leftout_bend_inv_sparse.RDS"))
+
+#list of KASP additive and dominance effects to iterate through
+KASPefflist <- colnames(BLUPs_df_markers_ad %>% dplyr::select(KASP1_Xa:KASP10_Xd))
+
+kasp_associations <- data.frame()
+
+for(i in seq_along(traitlist)){ #iterate through each trait
+  
+  traiti <- traitlist[i]
+  print(traiti)
+  
+  for(j in 1:10){ #iterate through each marker
+    
+    KASPj <- KASPefflist[c(j, j+10)]
+    #print(KASPj)
+
+    test_ij <- asreml(data = BLUPs_df_markers_ad, 
+                  fixed = formula(paste0( traiti, "~ 1 + ", KASPj[1]," + ", KASPj[2] )),
+                  random = ~ vm(germplasmName, GLOC1_inv),
+                  residual = ~ units,
+                  na.action = na.method(y = "include", x = "omit"),
+                  trace=F)
+    test_ij <- update.asreml(test_ij, trace=F) #iterate more times 
+    
+    asrtests_obj <- asremlPlus::as.asrtests(test_ij, which = "fixed")
+    Waldtest_ij  <- asrtests_obj$wald.tab
+    
+    #Waldtest_ij <- wald.asreml(test_ij)
+    
+    
+    #extract KASP effects and se
+    KASPeffs_ij <- as.data.frame(summary(test_ij, coef=T)$coef.fixed[1:2,])
+    KASPeffs_ij$trait <- traiti
+    KASPeffs_ij$P <- Waldtest_ij[c(3,2),4]
+    KASPeffs_ij$effect <- rownames(KASPeffs_ij)
+    
+    kasp_associations <- rbind(kasp_associations, KASPeffs_ij)
+
+  }#end KASP loop
+}#end trait loop
+
+  
+#kasp_associations$effect <- rownames(kasp_associations) 
+kasp_associations$eff_type <- as.factor(gsub(".*_X", "", kasp_associations$effect))
+kasp_associations$marker <- as.factor(gsub("_X.*", "", kasp_associations$effect))
+kasp_associations$markernum <- as.numeric(gsub("KASP", "", kasp_associations$marker))
+
+
+#saveRDS(kasp_associations, file="kasp_associations_CET_alltraits.RDS")
+
+```
+
+
+Plot marker effect estimates for each trait
+```{r}
+#kasp_associations <- readRDS("kasp_associations_CET_alltraits.RDS")
+pd <- position_dodge(0.3)
+
+
+#prepare significance annotations
+kasp_associations <- kasp_associations %>%
+  mutate(sig = ifelse(round(P, digits=2) <= 0.01, "T", "F"),
+         Zsig = ifelse(abs(z.ratio) >= 2.5, "T","F"))
+
+#sanity check
+#zs <- pnorm(abs(kasp_associations$z.ratio), lower.tail =FALSE) *2 
+#plot(zs, kasp_associations$P)
+
+asterisk_summary <- kasp_associations %>%
+  group_by(markernum, trait) %>%
+  summarise(
+    y_ast = max(1.1*(solution + 1.96 * `std error`), na.rm = TRUE), .groups = "drop"  )
+
+asterisk_data <- kasp_associations %>%
+  filter(sig == "T") %>%
+  dplyr::select(markernum, trait, eff_type) %>%
+  distinct() %>%
+  left_join(asterisk_summary, by = c("markernum", "trait"))
+
+y_limits <- asterisk_data %>%
+  group_by(trait) %>%
+  summarise(y_max_ast = 1.1*max(y_ast, na.rm = TRUE))  # Add padding
+
+kasp_associations <- left_join(kasp_associations, y_limits, by="trait")
+
+#plot agronomic traits
+KASPplots <- ggplot(kasp_associations %>% filter(!trait %in% c("STEMGIRTH", "PLTHT", "VIGOR")), 
+                    aes(markernum, solution)) +
+    geom_point(aes(color=eff_type), position=pd) +
+    geom_errorbar(aes(ymin=solution-(1.96*`std error`), ymax=solution+(1.96*`std error`),
+                      color=eff_type), position=pd) + #width=.25
+    xlab("KASP marker") + ylab("marker effect estimate") +
+    scale_x_continuous(breaks=seq(1, 10, 1)) +
+    facet_wrap(~ trait, scales="free_y") +
+    scale_color_discrete(name="effect type", labels=c("additive", "dominance")) +
+  geom_text(data = asterisk_data %>% filter(!trait %in% c("STEMGIRTH", "PLTHT", "VIGOR")), 
+        aes(x = markernum, y = y_ast, color=eff_type), label = "*", size=6, show.legend = FALSE) +
+  # Invisible geom to stretch axis only if y_max_ast is non-NA
+  geom_blank(aes(y = y_max_ast))
+
+#ggsave(KASPplots, width=13, height=7.8, filename=paste0(project_path, "figures/KASP_lm_effect_sizes.png"))
+
+
+#plot vigor traits
+kasp_vigor_associations <- kasp_associations %>% filter(trait %in% c("STEMGIRTH", "PLTHT", "VIGOR")) %>%
+  mutate(sig = ifelse(round(P, digits=2) <= 0.01, "T", "F"))
+
+Vigorplots <- ggplot(kasp_vigor_associations, aes(markernum, solution)) +
+    geom_point(aes(color=eff_type), position=pd) +
+    geom_errorbar(aes(ymin=solution-(1.96*`std error`), ymax=solution+(1.96*`std error`),
+                      color=eff_type), position=pd) + #width=.25
+    xlab("KASP marker") + ylab("marker effect estimate") +
+    #scale_y_continuous(breaks=c(-1.5, -1, -0.5, 0, 0.5)) +
+    scale_x_continuous(breaks=seq(1, 10, 1)) +
+    facet_wrap(~ trait, scales="free_y", labeller = labeller(trait = c(
+      "PLTHT" = "A. PLTHT",
+      "STEMGIRTH" = "B. STEMGIRTH",
+      "VIGOR" = "C. VIGOR")) ) +
+    scale_color_discrete(name="effect type", labels=c("additive", "dominance")) +
+  geom_text(
+    data = asterisk_data %>% filter(trait %in% c("STEMGIRTH", "PLTHT", "VIGOR")), aes(x = markernum, y = y_ast,
+    color=eff_type), label = "*", size = 6, vjust = 0, show.legend = FALSE) +
+  # Invisible geom to stretch axis only if y_max_ast is non-NA
+  geom_blank(aes(y = 1.1*y_max_ast))
+
+#ggsave(Vigorplots, width=10, height=2.5, filename=paste0(project_path, "figures/KASP_lm_vigor_effect_sizes.png"))
+
+
+
+
+#plot agronomic traits subset with significance/main interest
+KASPplots_subset <- ggplot(kasp_associations %>% filter(trait %in% c("DM", "RTNO", "RTROT", "NKLGT", "A","FYLD", "TC")), 
+                    aes(markernum, solution)) +
+    geom_point(aes(color=eff_type), position=pd) +
+    geom_errorbar(aes(ymin=solution-(1.96*`std error`), ymax=solution+(1.96*`std error`),
+                      color=eff_type), position=pd) + #width=.25
+    xlab("KASP marker") + ylab("marker effect estimate") +
+    scale_x_continuous(breaks=seq(1, 10, 1)) +
+    facet_wrap(~ trait, scales="free_y", labeller = labeller(trait = c(
+      "A" = "A. CHROMO_A", "DM" = "B. DM", "FYLD" = "C. FYLD", "NKLGT" = "D. NKLGT", "RTNO" = "E. RTNO", "RTROT" = "F. RTROT" ,  "TC" = "G. TC")) ) +
+    scale_color_discrete(name="effect type", labels=c("additive", "dominance")) +
+  geom_text(data = asterisk_data %>% filter(trait %in% c("DM", "RTNO", "RTROT", "NKLGT", "A","FYLD", "TC")), 
+        aes(x = markernum, y = y_ast, color=eff_type), label = "*", size=6, show.legend = FALSE) +
+  # Invisible geom to stretch axis only if y_max_ast is non-NA
+  geom_blank(aes(y = y_max_ast))
+
+#ggsave(KASPplots_subset, width=10, height=5.5, filename=paste0(project_path, "figures/KASP_agronomoic_subset _lm_effect_sizes.png"))
+
+
+Vigorplots
+KASPplots_subset
+```
+
+Show the significant marker effects:
+```{r}
+#set significance threshold accounting for multiple test correction
+#10 markers, 2 effects (but not all independent)
+# estimate number of independent tests: number of PCs which account for 99.5% of all the variation in the glaziovii markers
+
+KASPcor <- cor(BLUPs_df_markers_ad %>% dplyr::select(`27643909`:`39131171`) %>%
+                       filter(complete.cases(.)))
+summary(prcomp(KASPcor))
+
+#first 5 PCs account for 99.695% of the variation
+Pthresh <- 0.05/5
+
+#associations by significant p-value
+kasp_associations %>% filter(P <= Pthresh)
+
+#associations by high Z-score
+kasp_associations %>% filter(abs(z.ratio) >= 2.5)
+
+```
+
+Stepwise selection with mixed linear model:
+```{r}
+library(lme4)
+library(MuMIn) #multi-model inference package
+
+
+
+#List of KASP additive and dominance effects to test
+KASPefflist <- colnames(BLUPs_df_markers_ad %>% dplyr::select(KASP1_Xa:KASP10_Xd))
+
+#initiate storage
+kasp_associations <- data.frame()
+
+# Make a list of all possible combinations of the 10 KASPs 
+all_KASP_combinations <- list()
+# Loop over all possible subset sizes (0 to 10)
+KASPlist <- c(1:10)
+for (i in 0:length(KASPlist)) {
+  if (i == 0) {
+    # For size 0, include the empty set
+    all_KASP_combinations[[1]] <- numeric(0)
+  } else {
+    # Get combinations of size i and store in the list
+    comb <- combn(KASPlist, i, simplify = FALSE)
+    all_KASP_combinations <- c(all_KASP_combinations, comb)  # Append combinations
+  }
+}
+
+
+# iterate through all possible combinations for each trait
+traitlist <- c("DM", "RTNO","TC","VIGOR","RTROT","SPROUT","RTSZ","SHTWT","FYLD","DYLD","TYLD",
+               "HI","L","A","B","STEMGIRTH","PLTHT")
+for(i in seq_along(traitlist)){ #iterate through each trait
+  
+  traiti <- traitlist[i]
+  print(traiti)
+
+
+
+  # Now iterate through all combinations, testing each linear model and getting AIC
+  model_AIC_storage <- c()
+  time <- 1
+  for (comb in all_KASP_combinations) {
+    print(paste(traiti, time)); time <- time + 1 #progress tracker
+    
+    KASPsToModel <- unlist(comb)
+    KASPeffsToModel <- KASPefflist[c(KASPsToModel, KASPsToModel+10)]
+    
+    if(length(KASPeffsToModel) == 0){ #fit a model without KASP markers for the first combination, full null model
+      
+      test_ij <- asreml(data = BLUPs_df_markers_ad, 
+                    fixed = formula(paste0( traiti, " ~ 1 ")),
+                    random = ~ vm(germplasmName, GLOC1_inv),
+                    residual = ~ units,
+                    na.action = na.method(y = "include", x = "omit"),
+                    trace=F) }
+      
+    if(length(KASPeffsToModel) > 0){
+    test_ij <- asreml(data = BLUPs_df_markers_ad, 
+                    fixed = formula(paste0( traiti, " ~ 1 + ", paste(KASPeffsToModel, collapse="+"))),
+                    random = ~ vm(germplasmName, GLOC1_inv),
+                    residual = ~ units,
+                    na.action = na.method(y = "include", x = "omit"),
+                    trace=F) }
+      
+    model_AIC_storage <- c(model_AIC_storage, summary(test_ij)$aic)
+  
+  } #end combination
+  
+  #find model with the lowest AIC:
+  bestmodel <- all_KASP_combinations[which.min(model_AIC_storage)]
+
+  #re-fit best model
+  KASPsToModel <- unlist(bestmodel)
+  KASPeffsToModel <- KASPefflist[c(KASPsToModel, KASPsToModel+10)]
+    
+  if(length(KASPeffsToModel) > 0){
+   bestmodel_i <- asreml(data = BLUPs_df_markers_ad, 
+                    fixed = formula(paste0( traiti, " ~ 1 + ", paste(KASPeffsToModel, collapse="+"))),
+                    random = ~ vm(germplasmName, GLOC1_inv),
+                    residual = ~ units,
+                    na.action = na.method(y = "include", x = "omit"),
+                    trace=F)
+  }
+    
+    Waldtest_ij <- wald.asreml(bestmodel_i)
+    
+    #extract KASP effects and se
+    KASPeffs_ij <- as.data.frame(summary(bestmodel_i, coef=T)$coef.fixed) %>% filter(grepl("KASP",rownames(.)))
+    KASPeffs_ij$trait <- traiti
+    KASPeffs_ij$P <- (as.data.frame(Waldtest_ij) %>% filter(grepl("KASP",rownames(.))))[,4]
+    KASPeffs_ij$effect <- rownames(KASPeffs_ij)
+    
+    kasp_associations <- rbind(kasp_associations, KASPeffs_ij)
+
+}#end trait loop
+
+saveRDS(kasp_associations, file=paste0(project_path, "output/KASP_associations_LM_bestAIC.RDS"))
+
+
+kasp_associations %>% filter(P < 0.0001)
+```
+
+
+Genetic correlations between traits:
+```{r}
+gencor <- cor(BLUPs_df_markers %>% dplyr::select(CMD1S:PLTHT))
+
+
+gencor["STEMGIRTH",]
+gencor["VIGOR",]
+gencor["DM",]
+gencor["RTNO",]
+
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$RTWT, method="kendall")
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$RTNO, method="kendall")
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$RTSZ, method="kendall")
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$FYLD, method="kendall")
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$DYLD, method="kendall")
+
+
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$VIGOR, method="kendall")
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$PLTHT, method="kendall")
+cor.test(BLUPs_df_markers$STEMGIRTH, BLUPs_df_markers$SPROUT, method="kendall")
+cor.test(BLUPs_df_markers$VIGOR, BLUPs_df_markers$PLTHT, method="kendall")
+
+```
+
+Make trait genetic correlation heatmap:
+```{r}
+mapped_trait_list <- c("")
+
+blup_mat <- BLUPs_df_markers %>% dplyr::select(CMD1S:PLTHT) %>% dplyr::select(-c(PUBESEVERITY3, EASEPL))
+colnames(blup_mat)[which(colnames(blup_mat) == "STEMGIRTH")] <- "GIRTH"
+rownames(blup_mat)[which(rownames(blup_mat) == "STEMGIRTH")] <- "GIRTH"
+
+# Function to compute Kendall's tau and p-value for each pair of variables
+kendall_test <- function(x, y) {
+  test <- cor.test(x, y, method = "kendall")
+  return(c(tau = test$estimate, p_value = test$p.value))
+}
+
+# Compute Kendall's tau correlation and p-values for all variable pairs
+n <- ncol(blup_mat)
+cor_results <- matrix(NA, n, n)
+p_values <- matrix(NA, n, n)
+
+for (i in 1:n) {
+  for (j in 1:n) {
+    if (i <= j) {
+      res <- cor.test(blup_mat[, i], blup_mat[, j], method="kendall")
+      cor_results[i, j] <- res$estimate
+      cor_results[j, i] <- res$estimate  # Symmetric matrix
+      p_values[i, j] <- res$p.value
+      p_values[j, i] <- res$p.value
+    }
+  }
+}
+
+colnames(cor_results) <- colnames(blup_mat); rownames(cor_results) <- colnames(blup_mat)
+colnames(p_values) <- colnames(blup_mat); rownames(p_values) <- colnames(blup_mat)
+
+# Convert matrices to long format for ggplot2
+cor_melted <- reshape2::melt(cor_results)
+p_melted <- reshape2::melt(p_values)
+
+# Merge correlation and p-value data
+cor_melted$p_value <- p_melted$value
+cor_melted$significant <- cor_melted$p_value < (0.05/((26*25)/2))  # Mark Bonferroni significant values
+
+# Remove lower triangle
+cor_melted_tri <- cor_melted[as.numeric(cor_melted$Var1) > as.numeric(cor_melted$Var2) , ]
+
+# Reverse x axis order
+cor_melted_tri$Var1 <- factor(cor_melted_tri$Var1, levels = rev(levels(cor_melted_tri$Var1))) 
+
+
+# Create the heatmap with bolded significant values
+ggplot(cor_melted_tri, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2), fontface = ifelse(significant, "bold", "plain")), size = 2) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab") +
+  theme_minimal() + xlab("") + ylab("") +
+  labs(title = expression("Genetic correlations (" * tau * ") between clonal traits"),
+       fill = "Kendall's Tau\nCorrelation") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_blank(),
+        panel.grid = element_blank())
+
+ggsave(file="./figures/genetic_corr_matrix_fixed.png", height=7, width=8, units="in")
+```
+
+
+
+

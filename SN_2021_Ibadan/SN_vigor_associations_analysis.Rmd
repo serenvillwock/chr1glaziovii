@@ -1,0 +1,1189 @@
+---
+title: "SN vigor associations"
+author: "Seren Villwock"
+date: "1/20/2022"
+output: html_document
+---
+
+Setup directory and load packages
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/')
+
+library(tidyverse)
+library(ggcorrplot)
+library(lme4)
+library(lmerTest)
+library(ragg)
+library(RColorBrewer)
+library(MASS)
+library(qtl)
+```
+
+
+Read in dataset (cleaned and merged in SNgenotypes.Rmd) 
+containing KASP marker genotypes, pedigree, and vigor traits
+```{r}
+alldata = readRDS(file="alldata.RDS")
+
+#read in data with parent incidence columns:
+# file created in CETselection_AlgDesignOptFederov.Rmd
+data_parentwide = readRDS(file="data_parentwide.RDS")
+
+#clean by setting plant height to NA where the stem was broken
+alldata$plant_height[alldata$broken_stem == T] <- NA
+data_parentwide$plant_height[data_parentwide$plant_height == T] <- NA
+
+```
+
+Add columns for homozygosity and heterozygosity scores:
+```{r}
+#count number of markers that are homozygous glaz per individual:
+alldata$homozyg_score = apply(alldata[,2:11], 1, function(x) length(which(x == 2)))
+
+#count number of markers that are heterozygous per individual:
+alldata$het_score = apply(alldata[,2:11], 1, function(x) length(which(x == 1)))
+```
+
+
+Make Xa, Xd, and Xglaz matrices:
+```{r}
+#additive effect: -1, 0, 1 coding
+Xa = alldata %>% rowwise %>%
+  mutate_at(.vars= 2:11, function(x){x - 1} ) #move from {0,1,2} to {-1,0,1} coding
+colnames(Xa)[2:11] = c("KASP1_Xa", "KASP2_Xa", "KASP3_Xa", "KASP4_Xa", "KASP5_Xa", "KASP6_Xa" ,"KASP7_Xa", "KASP8_Xa", "KASP9_Xa", "KASP10_Xa")
+
+
+#dominance effect: -1 for heterozygote, 1 for homozygote
+Xd = alldata %>% rowwise %>%
+  mutate_at(.vars= 2:11, function(x){1-2*abs(x - 1)} ) #Xd is 1-2*abs(xa) 
+colnames(Xd)[2:11] = c("KASP1_Xd", "KASP2_Xd", "KASP3_Xd", "KASP4_Xd", "KASP5_Xd", "KASP6_Xd" ,"KASP7_Xd", "KASP8_Xd", "KASP9_Xd", "KASP10_Xd")
+
+
+#Xglaz matrix that defines homozygous glaz alleles with T/F:
+#homozygous glaz effect: T for homozygous glaz, F otherwise
+glaz_X = alldata %>% rowwise %>%
+  mutate_at(.vars= 2:11, function(x){x > 1} ) 
+colnames(glaz_X)[2:11] = c("KASP1_homglaz", "KASP2_homglaz", "KASP3_homglaz", "KASP4_homglaz", "KASP5_homglaz", "KASP6_homglaz" ,"KASP7_homglaz", "KASP8_homglaz", "KASP9_homglaz", "KASP10_homglaz")
+
+
+#Merge X matrices:
+Xall = merge(merge(Xa, Xd), glaz_X)
+#saveRDS(Xall, file="Geno_matrices_Xa_Xd_Xglaz.RDS")
+```
+
+
+
+Correlation matrix between markers:
+```{r}
+cor_data = alldata
+colnames(cor_data)[2:11] <- c(1:10) #c("KASP1","KASP2","KASP3","KASP4","KASP5","KASP6", "KASP7",
+                             # "KASP8","KASP9","KASP10")
+
+cormatrix = cor(cor_data[,2:11], use = "complete.obs")
+
+cormatrix_tight <-  round(cormatrix,2)
+#tried to cut off first zero but ggcorrplot doesn't accept character strings
+
+SNheatmap <- ggcorrplot(cormatrix_tight, lab=TRUE, legend.title= "correlation coefficient") +
+  ggtitle(label="KASP marker correlations in SN") +
+  scale_x_continuous(breaks=c(1:10)) +
+  scale_y_continuous(breaks=c(1:10))
+
+ragg::agg_png("KASP_SNcorrelation_heatmap_tight.png", width = 10, height = 6, units = "in", res = 300, scaling=1.2)
+SNheatmap
+dev.off()
+
+
+
+
+#Triangle heatmap version:
+
+# Convert matrices to long format for ggplot2
+cor_melted <- reshape2::melt(cormatrix_tight)
+
+# Remove lower triangle
+cor_melted_tri <- cor_melted[as.numeric(cor_melted$Var1) <= as.numeric(cor_melted$Var2) , ]
+
+# Reverse x axis order
+cor_melted_tri$Var1fac <- factor(cor_melted_tri$Var1, levels = c(1:10)) 
+cor_melted_tri$Var2fac <- factor(cor_melted_tri$Var2, levels = rev(c(1:10))) 
+
+
+# Create the triangle heatmap 
+ragg::agg_png("KASP_SNcorrelation_heatmap_lowertri.png", width = 6, height = 4, units = "in", res = 300, scaling=1.3)
+
+ggplot(cor_melted_tri, aes(Var1fac, Var2fac, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2)), size = 2) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab") +
+  theme_minimal() + xlab("") + ylab("") +
+  labs(title = expression("KASP marker correlations in SN"),
+       fill = "Pearson's r") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1),
+        panel.border = element_blank(),
+        panel.grid = element_blank()) +
+  scale_x_discrete(position = "top")
+
+dev.off()
+
+```
+
+
+
+
+##A) Model plant height:
+
+1a) without accounting for family; block/row as random effect
+```{r}
+ht_nofammod = lmerTest::lmer(formula = plant_height ~ 
+                   KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+                   KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + 
+                   KASP1_Xd + KASP2_Xd + KASP3_Xd + KASP4_Xd + KASP5_Xd +  
+                   KASP6_Xd + KASP7_Xd + KASP8_Xd + KASP9_Xd + KASP10_Xd + 
+                   (1|block/row), 
+                   data=Xall)
+
+summary(ht_nofammod)
+```
+
+
+2a) add family as a random effect
+
+```{r}
+ht_wfammod = lmerTest::lmer(formula = plant_height ~ 
+                   KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+                   KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + 
+                   KASP1_Xd + KASP2_Xd + KASP3_Xd + KASP4_Xd + KASP5_Xd +  
+                   KASP6_Xd + KASP7_Xd + KASP8_Xd + KASP9_Xd + KASP10_Xd + 
+                   (1|block/row) + (1|family),
+                   data=Xall)
+
+summary(ht_wfammod)
+
+```
+
+
+3a) use parent incidence matrix instead of family
+
+```{r}
+varlist = names(data_parentwide)[35:95]
+
+
+fixed.part <- paste0("plant_height ~ ", paste(varlist, collapse=" + "))
+random.part <- "(1|block/row)"
+parinc_formula = formula(paste(fixed.part, random.part, sep = " + ")) 
+                              
+
+ht_wparmod = lmerTest::lmer(formula = parinc_formula, data=data_parentwide)
+                            
+summary(ht_wparmod)
+#no significant markers
+```
+
+
+
+
+
+##B) Model stem diameter:
+
+1b) without accounting for family; block/row as random effect
+```{r}
+stm_nofammod = lmerTest::lmer(formula = stem_diam ~ 
+                   KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+                   KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + 
+                   KASP1_Xd + KASP2_Xd + KASP3_Xd + KASP4_Xd + KASP5_Xd +  
+                   KASP6_Xd + KASP7_Xd + KASP8_Xd + KASP9_Xd + KASP10_Xd + 
+                   (1|block/row), 
+                   data=Xall)
+
+
+summary(stm_nofammod)
+```
+
+2b) add family as a random effect
+
+```{r}
+stm_wfammod = lmerTest::lmer(formula = stem_diam ~ 
+                   KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+                   KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + 
+                   KASP1_Xd + KASP2_Xd + KASP3_Xd + KASP4_Xd + KASP5_Xd +  
+                   KASP6_Xd + KASP7_Xd + KASP8_Xd + KASP9_Xd + KASP10_Xd + 
+                   (1|block/row) + (1|family),
+                   data=Xall)
+
+summary(stm_wfammod)
+
+
+
+#Plot the effect sizes:
+stm_wfammod_coef = as.data.frame(summary(stm_wfammod)$coefficients)[-1,] 
+#(removed the first row with intercept coefficient)
+stm_wfammod_coef$variable <- rownames(stm_wfammod_coef)
+stm_wfammod_coef$varnum <- 1:nrow(stm_wfammod_coef)
+stm_wfammod_coef$eff_type <- NA
+stm_wfammod_coef$eff_type[1:10] <- "A"
+stm_wfammod_coef$eff_type[11:20] <- "D"
+
+
+
+
+
+#plot marker effects on stem diameter (additive effects and dominance effects separated)
+ggplot(data=stm_wfammod_coef, aes(x=varnum, y=Estimate)) +
+  geom_point(aes(color=eff_type)) +
+  xlab("KASP marker") +
+  ylab("Estimate of effect on stem diameter (mm)") +
+  geom_errorbar(aes(ymin=Estimate-1.96*`Std. Error`, ymax=Estimate+1.96*`Std. Error`, color=eff_type), width=.1) +
+  theme(axis.text.x = element_text(angle=45)) +
+  scale_x_continuous(breaks=1:20, labels=c("xa_01", "xa_02", "xa_03", "xa_04", 
+       "xa_05", "xa_06", "xa_07", "xa_08", "xa_09", "xa_10",
+       "xd_01", "xd_02", "xd_03", "xd_04", 
+       "xd_05", "xd_06", "xd_07", "xd_08", "xd_09", "xd_10"))
+
+
+
+#plot marker effects on stem diameter (additive effects and dominance effects next to each other)
+ggplot(data=stm_wfammod_coef, aes(x=variable, y=Estimate)) +
+  geom_point(aes(color=eff_type)) +
+  xlab("KASP marker") +
+  ylab("Estimate of effect on stem diameter (mm)") +
+  geom_errorbar(aes(ymin=Estimate-1.96*`Std. Error`, ymax=Estimate+1.96*`Std. Error`, color=eff_type), width=.1) +
+  theme(axis.text.x = element_text(angle=45)) 
+
+
+
+
+
+```
+
+
+3b) use parent incidence matrix instead of family
+
+```{r}
+varlist = names(data_parentwide)[35:95]
+
+
+fixed_part_stm <- paste0("stem_diam ~ ", paste(varlist, collapse=" + "))
+random_part_stm <- "(1|block/row)"
+parinc_stm_formula = formula(paste(fixed_part_stm, random_part_stm, sep = " + ")) 
+                              
+
+stm_wparmod = lmerTest::lmer(formula = parinc_stm_formula, data=data_parentwide)
+                            
+summary(stm_wparmod)
+
+
+
+#Plot the effect sizes:
+
+stm_wparmod_coef = as.data.frame(summary(stm_wparmod)$coefficients)[2:21,] 
+#(select only glaz marker effects)
+stm_wparmod_coef$variable <- rownames(stm_wparmod_coef)
+stm_wparmod_coef$eff_type <- NA
+stm_wparmod_coef$eff_type[1:10] <- "A"
+stm_wparmod_coef$eff_type[11:20] <- "D"
+
+
+#plot marker effects on stem diameter (additive effects and dominance effects next to each other)
+ggplot(data=stm_wparmod_coef, aes(x=variable, y=Estimate)) +
+  geom_point(aes(color=eff_type)) +
+  xlab("Effect") +
+  ylab("Estimate of effect on stem diameter (mm)") +
+  geom_errorbar(aes(ymin=Estimate-1.96*`Std. Error`, ymax=Estimate+1.96*`Std. Error`, color=eff_type), width=.1) +
+  theme(axis.text.x = element_text(angle=45)) 
+```
+
+
+
+4b) F-tests comparing full and reduced model (with and without all KASPs; with and without dominance or additive effects)
+
+Model comparison with and without KASP effects:
+```{r}
+#Define the reduced model for stem diameter with no KASP effects
+red_varlist = names(data_parentwide)[55:95] #only parent effects, no KASP effects
+
+red_fixed_part <- paste0("stem_diam ~ ", paste(red_varlist, collapse=" + "))
+red_random_part <- "(1|block/row)"
+red_parinc_stm_formula = formula(paste(red_fixed_part, red_random_part, sep = " + ")) 
+                              
+
+stm_wparmod_red = lmerTest::lmer(formula = red_parinc_stm_formula, data=data_parentwide)
+ 
+
+#Compare the full and reduced model to see if the KASP markers help improve the fit:
+anova(stm_wparmod_red, stm_wparmod)
+
+#Yes, adding KASP markers does appear to slightly improve the fit looking at p-value, but the AIC values are quite similar
+
+```
+
+Model comparison with and without dominance effects:
+```{r}
+#Define the reduced model for stem diameter with only KASP additive effects
+red_add_varlist = names(data_parentwide)[c(35:44,55:95)] #only parent effects, no KASP effects
+
+red_add_fixed_part <- paste0("stem_diam ~ ", paste(red_add_varlist, collapse=" + "))
+red_add_random_part <- "(1|block/row)"
+red_add_parinc_stm_formula = formula(paste(red_add_fixed_part, red_add_random_part, sep = " + ")) 
+                              
+
+stm_wparmod_red_add = lmerTest::lmer(formula = red_add_parinc_stm_formula, data=data_parentwide)
+ 
+
+#Compare the full and reduced model to see if the KASP dominance effects help improve the fit:
+anova(stm_wparmod_red_add, stm_wparmod)
+
+#Yes, adding dominance effects does appear to slightly improve the fit looking at p-value, but the AIC values are quite similar again.
+```
+
+
+Model comparison with and without additive effects:
+```{r}
+#Define the reduced model for stem diameter with only KASP additive effects
+red_dom_varlist = names(data_parentwide)[c(45:95)] #only parent effects, no KASP effects
+
+red_dom_fixed_part <- paste0("stem_diam ~ ", paste(red_dom_varlist, collapse=" + "))
+red_dom_random_part <- "(1|block/row)"
+red_dom_parinc_stm_formula = formula(paste(red_dom_fixed_part, red_dom_random_part, sep = " + ")) 
+                              
+
+stm_wparmod_red_dom = lmerTest::lmer(formula = red_dom_parinc_stm_formula, data=data_parentwide)
+ 
+
+#Compare the full and reduced model to see if the KASP additive effects help improve the fit:
+anova(stm_wparmod_red_dom, stm_wparmod)
+
+#Adding additive effects on top of dominance effects does not appear to significantly improve the fit
+```
+
+
+
+
+
+5b) Group markers by LD clusters
+Marker groups: {1,2} {3,4,5} {6,7} {8} {9, 10}
+
+```{r}
+#break down marker groups into PCs (do 8 alone because it is centered too)
+pcA1_2 = prcomp(data_parentwide[,35:36]) #additive effects of KASPS 1 & 2
+pcA3_4_5 = prcomp(data_parentwide[,37:39]) #additive effects of KASPS 3, 4 & 5
+pcA6_7 = prcomp(data_parentwide[,40:41]) #additive effects of KASPS 6&7
+pcA8 = prcomp(data_parentwide[,42]) #additive effects of KASPS 6&7
+pcA9_10 = prcomp(data_parentwide[,43:44]) #additive effects of KASPS 9&10
+pcD1_2 = prcomp(data_parentwide[,45:46]) #dominance effects of KASPS 1 & 2
+pcD3_4_5 = prcomp(data_parentwide[,47:49]) #dominance effects of KASPS 3, 4 & 5
+pcD6_7 = prcomp(data_parentwide[,50:51]) #dominance effects of KASPS 6&7
+pcD8 = prcomp(data_parentwide[,52]) #additive effects of KASPS 6&7
+pcD9_10 = prcomp(data_parentwide[,53:54]) #dominance effects of KASPS 9&10
+
+#bind the first PCs together
+PCreduced = data.frame(A1_2 = pcA1_2$x[,1], 
+                       A3_4_5 = pcA3_4_5$x[,1],
+                       A6_7 = pcA6_7$x[,1],
+                       A8 = pcA8$x[,1],
+                       A9_10 = pcA9_10$x[,1],
+                       D1_2 = pcD1_2$x[,1], 
+                       D3_4_5 = pcD3_4_5$x[,1],
+                       D6_7 = pcD6_7$x[,1],
+                       D8 = pcD8$x[,1],
+                       D9_10 = pcD9_10$x[,1], 
+                       SubjectID = data_parentwide$SubjectID)
+
+#merge with original dataframe to access phenotypes
+data_wPCs = merge(data_parentwide, PCreduced, by = "SubjectID")
+
+
+#define linear model the same as before but with KASPs reduced into groups
+varlist = names(data_wPCs)[55:105] #include all parent effects and PC-reduced KASP groups
+
+
+fixed_part_stm_grouped <- paste0("stem_diam ~ ", paste(varlist, collapse=" + "))
+random_part_stm <- "(1|block/row)"
+parinc_PCgrouped_formula = formula(paste(fixed_part_stm_grouped, random_part_stm, sep = " + ")) 
+                              
+
+stm_wpar_PCgroupedmod = lmerTest::lmer(formula = parinc_PCgrouped_formula, data=data_wPCs)
+                            
+stm_wpar_PCgrouped_sum = summary(stm_wpar_PCgroupedmod)
+print(stm_wpar_PCgrouped_sum)
+
+
+
+#write.csv(stm_wpar_PCgrouped_sum$coefficients, file= "stemdiam_model_PCgrouped.csv")
+
+
+```
+
+Grouped markers with family as random effect:
+```{r}
+varlist = names(data_wPCs)[96:105] #KASP groups only
+
+
+fixed_part_stm_grouped <- paste0("stem_diam ~ ", paste(varlist, collapse=" + "))
+random_part_stm <- "(1|block/row) + (1|family)"
+famrand_PCgrouped_formula = formula(paste(fixed_part_stm_grouped, random_part_stm, sep = " + ")) 
+                              
+
+famrand_PCgrouped_mod = lmerTest::lmer(formula = famrand_PCgrouped_formula, data=data_wPCs)
+                            
+summary(famrand_PCgrouped_mod)
+
+```
+
+
+
+
+
+#2/23/22
+
+
+
+#Backwards stepwise regression with grouped KASP markers
+```{r eval=FALSE}
+#copy the full model from above
+full_model_grouped <- stm_wpar_PCgroupedmod
+
+#stepwise regression model to see which fixed effects can be dropped:
+step_model_grouped <- lmerTest::step(full_model_grouped, direction = "backward", reduce.random=F)
+
+#print
+step_model_grouped$fixed
+
+get_model(step_model_grouped)
+#Looks like it kept A6_7, A8, and D6_7 
+```
+
+
+#Backwards stepwise regression with ungrouped KASP markers
+```{r eval = FALSE}
+#define full model
+varlist = names(data_parentwide)[35:95] #all kasp and parent effects
+fixed_part_stm <- paste0("stem_diam ~ ", paste(varlist, collapse=" + "))
+random_part_stm <- "(1|block/row)"
+parinc_stm_formula = formula(paste(fixed_part_stm, random_part_stm, sep = " + ")) 
+  
+#run the full model
+stm_fullmod = lmerTest::lmer(formula = parinc_stm_formula, data=data_parentwide)
+#summary(stm_fullmod)
+
+#stepwise regression model to see which fixed effects can be dropped:
+step_stm_model <- lmerTest::step(stm_fullmod, direction = "backward", reduce.random=F)
+
+#print
+step_stm_model$fixed
+
+get_model(step_stm_model)
+#Kept xa_6, xa_8, xd_3, xd_10 and 11 parents
+```
+
+
+#Backwards stepwise regression with ungrouped KASP markers
+#family as a random effect
+```{r eval = FALSE}
+kaspeff_list <- colnames(data_parentwide)[35:54]
+
+fixed_part_stm <- paste0("stem_diam ~ ", paste(kaspeff_list, collapse=" + "))
+random_part <- "(1|block/row) + (1|family)"
+famrand_stm_formula = formula(paste(fixed_part_stm, random_part, sep = " + ")) 
+                              
+
+stm_famrand_mod = lmerTest::lmer(formula = famrand_stm_formula, data=data_parentwide)
+                            
+summary(stm_famrand_mod)
+
+#significant markers: xa_8 barely misses Bonferonni cutoff
+
+
+#backwards regression on this model:
+step_model_famrand <- lmerTest::step(stm_famrand_mod, direction = "backward", reduce.random=F)
+
+
+
+#print which markers were not eliminated:
+step_model_famrand$fixed[step_model_famrand$fixed$Eliminated == 0,]
+stem_effects_backwardsstep <- step_model_famrand$fixed[step_model_famrand$fixed$Eliminated == 0,]
+
+
+#keeps xa_3 (ns), xa_4(ns), xa_6, xa_8, xd_3, xd_10  
+
+#print effect estimates:
+get_model(step_model_famrand)
+
+#effects alternate positive and negative
+```
+
+
+#Forwards stepwise regression (all KASP markers, family as a random effect)
+```{r eval = FALSE}
+#forwards regression on this model:
+stepfwd_model_famrand <- lmerTest::step(stm_famrand_mod, direction = "forward", reduce.random=F)
+
+#print
+stepfwd_model_famrand$fixed
+
+get_model(stepfwd_model_famrand)
+#Kept xa_3, xa_4, xa_6, xa_8, xd_3, and xd_10
+
+
+#forwards regression on the step_model_famrand model defined above:
+#stepAIC_stm_forward <- stepAIC(stm_famrand_mod, direction = "both", trace = T)
+
+#this didn't work: error "no method for assigning subsets of this S4 class". I think stepAIC doesn't work with mixed linear models with REML
+
+#trying with a regular fixed-effects model:
+#with no family effect:
+fixed_part_stm <- paste0("stem_diam ~ ", paste(kaspeff_list, collapse=" + "))
+
+#with all parent effects:
+fixed_part_parinc_stm <- paste0("stem_diam ~ ", paste(kaspeff_list, collapse=" + "), "+", paste(red_varlist, collapse=" + "))
+
+stm_fixedlm_formula = formula(fixed_part_parinc_stm) 
+
+stm_fixedlm_mod = lm(stm_fixedlm_formula, data=data_parentwide)
+
+stepAIC_stm_fixedforward <- stepAIC(stm_fixedlm_mod, direction = "both", trace = T)
+```
+
+Fix KASP on one end and see if other end is still significant:
+```{r}
+#Try with KASP 10 fixed
+
+kasp10effs <- kaspeff_list[c(10,20)]
+kasp3_10effs <- kaspeff_list[c(3,10,13,20)]
+
+
+fixed10_part_stm <- paste0("stem_diam ~ ", paste(kasp10effs, collapse=" + "))
+fixed3and10_part_stm <- paste0("stem_diam ~ ", paste(kasp3_10effs, collapse=" + "))
+random_part <- "(1|block/row) + (1|family)"
+
+
+
+stm_10only_formula = formula(paste(fixed10_part_stm, random_part, sep = " + ")) 
+stm_3and10_formula = formula(paste(fixed3and10_part_stm, random_part, sep = " + ")) 
+                           
+
+stm_10only_mod = lmerTest::lmer(formula = stm_10only_formula, data=data_parentwide)
+summary(stm_10only_mod)
+#dominance effect of 10 is significant
+
+
+stm_3and10_mod = lmerTest::lmer(formula = stm_3and10_formula, data=data_parentwide)
+summary(stm_3and10_mod)
+#dominance effects of 3 and 10 are both significant
+
+```
+
+
+
+
+
+
+
+
+#### Plant height
+# Backwards stepwise regression with ungrouped KASP markers, family as a random effect
+```{r eval=FALSE}
+kaspeff_list <- colnames(data_parentwide)[35:54]
+
+fixed_part_ht <- paste0("plant_height ~ ", paste(kaspeff_list, collapse=" + "))
+random_part <- "(1|block/row) + (1|family)"
+famrand_ht_formula = formula(paste(fixed_part_ht, random_part, sep = " + ")) 
+                              
+
+ht_famrand_mod = lmerTest::lmer(formula = famrand_ht_formula, data=data_parentwide)
+                            
+summary(ht_famrand_mod)
+
+# no significant markers
+
+
+#backwards regression on this model:
+step_htmodel_famrand <- lmerTest::step(ht_famrand_mod, direction = "backward", reduce.random=F)
+
+#print which markers were not eliminated:
+step_htmodel_famrand$fixed[step_htmodel_famrand$fixed$Eliminated == 0,]
+
+#keeps xa_1, xa_8, xd_10  
+
+#print effect estimates:
+get_model(step_htmodel_famrand)
+
+```
+
+
+
+
+
+#3/2/22
+Try using only family and not also block/row because families are ordered by row:
+```{r}
+kaspeff_list <- colnames(data_parentwide)[35:54]
+
+```
+
+```{r eval=FALSE} 
+fixed_part_stm <- paste0("stem_diam ~ ", paste(kaspeff_list, collapse=" + "))
+random_part_famonly <- "(1|family)"
+famonly_stm_formula = formula(paste(fixed_part_stm, random_part_famonly, sep = " + ")) 
+                              
+
+stm_famonly_mod = lmerTest::lmer(formula = famonly_stm_formula, data=data_parentwide)
+                            
+summary(stm_famonly_mod)
+
+#significant markers: xa_8 still barely misses Bonferonni cutoff
+
+
+#backwards regression on this model:
+step_model_famrand <- lmerTest::step(stm_famrand_mod, direction = "backward", reduce.random=T) #this time see if random effects are reduced
+#no random effects are eliminated
+#keeps the same markers: xa_3 (ns), xa_4(ns), xa_6, xa_8, xd_3, xd_10  
+
+step_model_famonly <- lmerTest::step(stm_famonly_mod, direction = "backward", reduce.random=F)
+
+#print which markers were not eliminated:
+step_model_famonly$fixed[step_model_famonly$fixed$Eliminated == 0,]
+#keeps the same markers: xa_3 (ns), xa_4(ns), xa_6, xa_8, xd_3, xd_10  
+
+```
+
+
+
+
+GWAS - type (MLM) method:
+Stem Diameter
+```{r}
+varlist = names(data_parentwide)[35:95]
+kaspeff_list <- colnames(data_parentwide)[35:54]
+
+alldata = readRDS(file="alldata.RDS")
+data_parentwide = readRDS(file="data_parentwide.RDS")
+
+
+all_associations = data.frame()
+for(i in 1:10){
+  KASPi = varlist[c(i,i+10)]
+  
+  #fit model
+  testi = lmerTest::lmer(formula = paste0("stem_diam ~ ", paste(KASPi, collapse="+"), "+ (1|family) + (1|block:row)"), 
+                 data=data_parentwide)
+  
+  #wald test for significance of add/dom fixed effects
+   waldtest_a <- aod::wald.test(Sigma = testi@vcov_beta, b = testi@beta, 
+            Terms = 2)
+    waldtest_d <- aod::wald.test(Sigma = testi@vcov_beta, b = testi@beta, 
+            Terms = 3)
+    
+    wald_results <- rbind(waldtest_a$result$chi2[c(1,3)], waldtest_d$result$chi2[c(1,3)])
+  
+   #bind marker effects and wald test results, exclude intercept
+  all_associations = rbind(all_associations, cbind(summary(testi)$coefficients[2:3,], wald_results) ) 
+  
+}
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$effect <- c("01_A", "01_D", "02_A", "02_D", "03_A", "03_D", "04_A", "04_D", 
+                             "05_A", "05_D", "06_A", "06_D", "07_A", "07_D", "08_A", "08_D", 
+                             "09_A", "09_10", "10_A", "10_D") #rownames(all_associations)
+markerlist <- c()
+for (i in 1:10) {markerlist <- c(markerlist, rep(i, 2))} #marker numbers 1-10
+all_associations$marker <- markerlist
+
+all_associations$eff_type <- rep(c("A","D"),10)
+
+
+Gao.cutoff <- 0.05/5
+all_associations$Waldsignif <- all_associations$P <= Gao.cutoff 
+
+write.csv(all_associations, file="GWAS_style_stem_diam_associations.csv")
+saveRDS(all_associations, file="GWAS_style_stem_diam_associations.RDS")
+```
+
+Graph results:
+```{r}
+library(ggplot2)
+all_associations <- readRDS("GWAS_style_stem_diam_associations.RDS")
+
+
+ggplot(all_associations, aes(x=effect, y=logp))+
+  geom_point(aes(color=eff_type)) +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with stem diameter") +
+  scale_color_discrete(name= "Effect type", labels = c("additive","dominance")) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+#save effect estimates:
+stem_effects_GWASstyle <- all_associations
+
+
+
+#graph with effects stacked in one column:
+stackedplt <- ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point(aes(color=eff_type), size =2) +
+  labs(y=bquote(-log[10](p)), x="Chr. 1 KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Glaziovii marker associations with stem diameter") +
+  scale_color_discrete(name= "Effect type", labels = c("additive","dominance")) +
+  scale_x_continuous(breaks= c(1:10))
+
+
+#use ragg package to scale dimensions but keep font size proportional with scale
+#ragg::agg_png("stem_diam_associations_plot.png", width = 15, height = 7, units = "in", res = 300, scaling=2.5)
+#stackedplt
+#dev.off()
+
+
+
+#plot effect sizes:
+pd <- position_dodge(0.2)
+
+effsizes <- ggplot(all_associations, aes(x=marker, y=Estimate))+
+  geom_point(aes(color=eff_type), size =2, position=pd) +
+  geom_errorbar(aes(ymin=Estimate-(1.96*`Std. Error`), ymax=Estimate+(1.96*`Std. Error`),
+                    color=eff_type), width=.25, position=pd) +
+  labs(y="Effect estimate (mm)", x="Chr. 1 KASP marker") +
+  ggtitle("Glaziovii marker effects on stem diameter in the SN") +
+  scale_color_discrete(name= "Effect type", labels = c("additive","dominance")) +
+  scale_x_continuous(breaks= c(1:10)) +
+  geom_text(data = all_associations[all_associations$Waldsignif, ], 
+            aes(label = "*", y = 0.6, color=eff_type), size = 6, show.legend = FALSE) 
+  #add asterisk for significant markers
+
+
+ragg::agg_png("stem_diam_SN_marker_effects.png", width = 15, height = 7, units = "in", res = 300, scaling=2.5)
+effsizes
+dev.off()
+
+effsizes
+
+```
+
+Plant Height
+```{r}
+all_associations = data.frame()
+for(i in 1:10){
+  KASPi = varlist[c(i,i+10)]
+  
+  testi = lmerTest::lmer(formula = paste0("plant_height ~ ", paste(KASPi, collapse="+"), "+ (1|family) + (1|block:row)"), 
+                 data=data_parentwide)
+  
+  #wald test for significance of add/dom fixed effects
+   waldtest_a <- aod::wald.test(Sigma = testi@vcov_beta, b = testi@beta, 
+            Terms = 2)
+    waldtest_d <- aod::wald.test(Sigma = testi@vcov_beta, b = testi@beta, 
+            Terms = 3)
+    
+    wald_results <- rbind(waldtest_a$result$chi2[c(1,3)], waldtest_d$result$chi2[c(1,3)])
+  
+   #bind marker effects and wald test results, exclude intercept
+  all_associations = rbind(all_associations, cbind(summary(testi)$coefficients[2:3,], wald_results) ) 
+  
+}
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$marker <- rownames(all_associations)
+all_associations$eff_type <- rep(c("A","D"),10)
+
+markerlist <- c()
+for (i in 1:10) {markerlist <- c(markerlist, rep(i, 2))} #marker numbers 1-10
+all_associations$marker <- markerlist
+
+
+all_associations$Waldsignif <- all_associations$P <= Gao.cutoff 
+Bon.cutoff <- 0.05/20
+
+saveRDS(all_associations, file="height_associations.RDS")
+```
+
+Graph results for plant height:
+```{r}
+all_associations <- readRDS(file="height_associations.RDS")
+
+
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with plant height")
+
+
+hteffsizes <- ggplot(all_associations, aes(x=marker, y=Estimate))+
+  geom_point(aes(color=eff_type), size =2, position=pd) +
+  geom_errorbar(aes(ymin=Estimate-(1.96*`Std. Error`), ymax=Estimate+(1.96*`Std. Error`),
+                    color=eff_type), width=.25, position=pd) +
+  labs(y="Effect estimate (cm)", x="Chr. 1 KASP marker") +
+  ggtitle("Glaziovii marker effects on plant height in the SN") +
+  scale_color_discrete(name= "Effect type", labels = c("additive","dominance")) +
+  scale_x_continuous(breaks= c(1:10)) +
+  geom_text(data = all_associations[all_associations$Waldsignif, ], 
+            aes(label = "*", y = 2, color=eff_type), size = 6, show.legend = FALSE) 
+  #add asterisk for significant markers
+
+
+
+
+ragg::agg_png("height_SN_marker_effects.png", width = 15, height = 7, units = "in", res = 300, scaling=2.5)
+hteffsizes
+dev.off()
+
+hteffsizes
+
+
+
+# ggplot(data=stm_wfammod_coef, aes(x=varnum, y=Estimate)) +
+#   geom_point(aes(color=eff_type)) +
+#   xlab("KASP marker") +
+#   ylab("Estimate of effect on stem diameter (mm)") +
+#   geom_errorbar(aes(ymin=Estimate-1.96*`Std. Error`, ymax=Estimate+1.96*`Std. Error`, color=eff_type), width=.1) +
+#   theme(axis.text.x = element_text(angle=45)) +
+#   scale_x_continuous(breaks=1:20, labels=c("xa_01", "xa_02", "xa_03", "xa_04", 
+#        "xa_05", "xa_06", "xa_07", "xa_08", "xa_09", "xa_10",
+#        "xd_01", "xd_02", "xd_03", "xd_04", 
+#        "xd_05", "xd_06", "xd_07", "xd_08", "xd_09", "xd_10"))
+
+```
+
+
+Plant shape
+```{r}
+data_parentwide$shape_fac <- as.numeric(data_parentwide$branch_shape)
+
+all_associations = data.frame()
+for(i in 1:10){
+  KASPi = kaspeff_list[c(i,i+10)]
+  
+  testi = lmerTest::lmer(formula = paste0("shape_fac ~ ", paste(KASPi, collapse="+"), "+ (1|family)"), 
+                 data=data_parentwide) #singular with block/row
+  
+  all_associations = rbind(all_associations, summary(testi)$coefficients[2:3,]) #bind marker effects but not intercept 
+}
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$marker <- rownames(all_associations)
+
+Bon.cutoff <- 0.05/20
+
+#graph results:
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with plant shape")
+```
+
+
+
+
+
+Stem Diameter not accounting for block:row:
+```{r}
+all_associations = data.frame()
+for(i in 1:10){
+  KASPi = kaspeff_list[c(i,i+10)]
+  
+  testi = lmerTest::lmer(formula = paste0("stem_diam ~ ", paste(KASPi, collapse="+"), "+ (1|family)"), 
+                 data=data_parentwide)
+  
+  all_associations = rbind(all_associations, summary(testi)$coefficients[2:3,]) #bind marker effects but not intercept 
+}
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$marker <- rownames(all_associations)
+
+Bon.cutoff <- 0.05/20
+
+#graph results:
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with stem diameter w/o block:row")
+
+
+```
+
+
+
+
+
+3/4:
+Convert genotype values to a factor instead of Xa and Xd:
+Stem Diameter not accounting for block:row:
+```{r}
+data_genofac <- data_parentwide
+#add a hyphen to the marker names so the factor levels are distinguished from marker id later
+colnames(data_genofac)[2:11] <- c(paste0(colnames(data_genofac)[2:11], "_"))
+#convert {0,1,2} allele coding into a factor
+data_genofac[,2:11] <- lapply(data_genofac[,2:11], as.factor) 
+
+#test models for each marker:
+all_associations = data.frame()
+all_associations_faclevels = data.frame()
+
+for(i in 2:11){ #for each of the 10 markers
+  markeri = names(data_genofac)[i]
+  
+  testi = lmerTest::lmer(formula = paste0("stem_diam ~", paste0(markeri), "+ (1|family) + (1|block:row)") , 
+                 data=data_genofac)
+  
+  all_associations = rbind(all_associations, anova(testi)$`Pr(>F)`) #anova for whole marker effect
+  all_associations_faclevels = rbind(all_associations_faclevels, summary(testi)$coefficients[c(2:3),5]) #t test for factor levels significance
+}
+stem_effects_asfactor <- all_associations
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations[,1]) #transform p values by -log10
+all_associations$marker <- c("01","02","03","04","05","06","07","08","09","10")#rownames(all_associations)
+
+Bon.cutoff <- 0.05/10 #10 F-tests, one per marker
+
+#graph results:
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with stem diameter, genotypes as factor")
+
+
+
+#check which factor levels are significant with Bonferonni correction:
+colnames(all_associations_faclevels) <- c("glaz1","glaz2")
+all_associations_faclevels$sig1 <- NA
+all_associations_faclevels$sig2 <- NA
+all_associations_faclevels$sig1[all_associations_faclevels$glaz1 < (0.05/20) ] <- T
+all_associations_faclevels$sig2[all_associations_faclevels$glaz2 < (0.05/20) ] <- T
+
+#print(all_associations_faclevels)
+#the only significant difference as between glaz0 and glaz1 at markers 8, 9, 10
+```
+
+
+
+
+
+See if boxplots for stem diameter/plant height are significantly influenced by family effects:
+```{r}
+#fit family as a random effect:
+famonly_mod = lmer(formula = "stem_diam ~  (1|family)", data=data_parentwide)
+fam_residuals <- summary(famonly_mod)$residuals
+fam_residuals <- data.frame(fam_residuals)
+
+data_famresid <- merge(data_parentwide, fam_residuals, by="row.names", all.x=TRUE)
+
+
+#convert to long form for boxplot:
+famresid_melt = data_famresid %>% pivot_longer(cols=c(x1:x10), names_to="KASPmarker")
+famresid_melt$KASPmarker = as.factor(famresid_melt$KASPmarker)
+famresid_melt$value = as.factor(famresid_melt$value)
+
+
+suppressWarnings(print( #ignore warning about removal of NA values
+  ggplot(data=famresid_melt, aes(x=KASPmarker, y=fam_residuals, fill=value)) +
+      geom_boxplot() +
+    xlab("KASP marker") +
+    ylab("Residual stem diameter (mm) after accounting for family") +
+    labs(fill = "Glaziovii allele dosage") +
+    scale_x_discrete(labels=c(1:10))
+))
+
+suppressWarnings(print( #ignore warning about removal of NA values
+  ggplot(data=famresid_melt, aes(x=KASPmarker, y=stem_diam, fill=value)) +
+      geom_boxplot() +
+    xlab("KASP marker") +
+    ylab("Stem diameter (mm) without accounting for family") +
+    labs(fill = "Glaziovii allele dosage") +
+    scale_x_discrete(labels=c(1:10))
+))
+
+
+
+
+
+
+
+#boxplot figure for presentations:
+#colorscheme <- c("#FBE2C5", "#9AC5E5", "#616BC7")
+colorpalette_purple2 <- c("#F18C7E", "#15338E", "#8999D0")
+colorpalette_purple1 <- c("#E8A69B", "#6A8CC8", "#11276A")
+colorpalette_purple3<- c("#ECB6AC", "#88A5D6", "#433EA9")
+
+
+stem_boxplots <- ggplot(data=famresid_melt, 
+      aes(x=KASPmarker, y=stem_diam, fill=value)) +
+      geom_boxplot() +
+    xlab("Chr. 1 KASP marker position (Mbp)") +
+    ylab("Stem diameter (mm)") +
+    labs(fill = "Glaziovii allele dosage") +
+    #scale_x_discrete(labels=c(1:10)) +
+    scale_x_discrete(labels = c("27.6","28.1", "29.4", "31.2",
+                                "32.9","34.4", "35.8", "37.1",
+                                "38.7","39.1")) +
+    scale_fill_manual(values=colorpalette_purple3)
+
+#print in high rest
+ragg::agg_png("stem_boxplots.png", width = 20, height = 7, units = "in", res = 300, scaling=2.75)
+suppressWarnings(print(stem_boxplots)) #ignore warning about removal of NA values
+dev.off()
+```
+
+
+Comparing effect estimates between the stepwise regression and GWAS-style models:
+
+```{r}
+stem_effects_GWASstyle$marker <- rownames(stem_effects_GWASstyle$marker)
+
+stem_effects_backwardsstep <- as.data.frame(summary(get_model(step_model_famrand))$coefficients)[-1,]
+stem_effects_backwardsstep$marker <- c(3,4,6,8,3,10)
+stem_effects_backwardsstep$efftype <- c("A", "A", "A", "A", "D" ,"D")
+
+#plot effect sizes:
+pd <- position_dodge(0.2)
+
+effsizes_step <- ggplot(stem_effects_backwardsstep, aes(x=marker, y=Estimate))+
+  geom_point(aes(color=efftype), size =2, position=pd) +
+  geom_errorbar(aes(ymin=Estimate-`Std. Error`, ymax=Estimate+`Std. Error`,
+                    color=efftype), width=.25, position=pd) +
+  labs(y="Effect on stem diameter (mm)", x="Chr. 1 KASP marker") +
+  ggtitle("Glaziovii marker effects on stem diameter") +
+  scale_color_discrete(name= "Effect type", labels = c("additive","dominance")) +
+  scale_x_continuous(breaks= c(1:10))
+
+
+ragg::agg_png("stem_diam_marker_effects_stepmodel.png", width = 15, height = 7, units = "in", res = 300, scaling=4)
+effsizes_step
+dev.off()
+
+
+
+  
+#stem_effects_GWASstyle
+#stem_effects_backwardsstep
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###
+OLD:
+###
+
+
+
+
+Try het_glaz and hom_glaz coding:
+for each marker, het_glaz is 1 if heterozygous, 0 if otherwise
+for each marker, hom_glaz is 1 if homozygous glaz, 0 if otherwise
+```{r}
+Xmatrix <- data_parentwide[,1:11]
+
+Ghet <- Xmatrix
+for(i in 2:11){
+  for(j in 1:nrow(Ghet)){
+    if(Xmatrix[j,i] == 1){ Ghet[j,i] <- 1 } else{ Ghet[j,i] <- 0 }
+  }
+}
+
+colnames(Ghet)[2:11] <- c("Ghet_1" , "Ghet_2" , "Ghet_3" , "Ghet_4" , "Ghet_5" , "Ghet_6" ,
+                            "Ghet_7" , "Ghet_8" , "Ghet_9" , "Ghet_10")
+
+Ghom <- Xmatrix
+for(i in 2:11){
+  for(j in 1:nrow(Ghom)){
+    if(Xmatrix[j,i] == 2){ Ghom[j,i] <- 1 } else{ Ghom[j,i] <- 0 }
+  }
+}
+colnames(Ghom)[2:11] <- c("Ghom_1" , "Ghom_2" , "Ghom_3" , "Ghom_4" , "Ghom_5" , "Ghom_6" ,
+                            "Ghom_7" , "Ghom_8" , "Ghom_9" , "Ghom_10")
+
+
+data_wGscores <- merge(merge(data_parentwide, Ghet, by= "SubjectID"), Ghom, by = "SubjectID")
+
+```
+
+
+
+Model with glaz scores:
+```{r}
+data_wGscores
+
+Gscores_list <- c("Ghet_1" , "Ghet_2" , "Ghet_3" , "Ghet_4" , "Ghet_5" , "Ghet_6" ,
+                            "Ghet_7" , "Ghet_8" , "Ghet_9" , "Ghet_10", "Ghom_1" , "Ghom_2" , 
+                  "Ghom_3" , "Ghom_4" , "Ghom_5" , "Ghom_6" , "Ghom_7" , "Ghom_8" , "Ghom_9" , "Ghom_10")
+
+fixed_part_glaz <- paste0("stem_diam ~ ", paste(Gscores_list, collapse=" + "))
+random_part <- "(1|family) + (1|block:row)"
+famrand_glaz_formula = formula(paste(fixed_part_glaz, random_part, sep = " + ")) 
+
+
+stm_glaz_famrand_mod = lmerTest::lmer(formula = famrand_glaz_formula, data=data_wGscores)
+summary(stm_glaz_famrand_mod)
+#none sig with Bonferonni correction
+
+
+step_glazmodel_famrand <- lmerTest::step(stm_glaz_famrand_mod, direction = "backward", reduce.random=F)
+
+# print which markers were not eliminated:
+step_glazmodel_famrand$fixed[step_glazmodel_famrand$fixed$Eliminated == 0,]
+
+   get_model(step_glazmodel_famrand)
+
+```
+
+
+#Make a genomic relationship matrix with the parents
+
+Read in genotypes
+```{r}
+ParDosMat <- readRDS("~/Desktop/Research/Glaziovii_introgression/Ubiaja_Trials/DosageMatrix_RefPanelAndGSprogeny_ReadyForGP_73019.rds")
+
+# Subset for Chr 1
+#grepl("S1", names(DosageMatrix[1,]) )
+#DosMat1 <- DosageMatrix[grep("S1_", names(DosageMatrix[1,])) , ]
+#grep("S1_", names(DosageMatrix[1,]))
+# first 8307 observations:  
+DosMat1 <- DosageMatrix[,1:8307]
+```
+
+
+
+```{r}
+#plot marker effects on stem diameter (additive effects and dominance effects separated)
+ggplot(data=stm_wfammod_coef, aes(x=varnum, y=Estimate)) +
+  geom_point(aes(color=eff_type)) +
+  xlab("KASP marker") +
+  ylab("Estimate of effect on stem diameter (mm)") +
+  geom_errorbar(aes(ymin=Estimate-1.96*`Std. Error`, ymax=Estimate+1.96*`Std. Error`, color=eff_type), width=.1) +
+  theme(axis.text.x = element_text(angle=45)) +
+  scale_x_continuous(breaks=1:20, labels=c("1_Xa", "2_Xa", "3_Xa", "4_Xa", 
+       "5_Xa", "6_Xa", "7_Xa", "8_Xa", "9_Xa", "10_Xa",
+       "1_Xd", "2_Xd", "3_Xd", "4_Xd", 
+       "5_Xd", "6_Xd", "7_Xd", "8_Xd", "9_Xd", "10_Xd"))
+
+```
+
+
+

@@ -1,0 +1,194 @@
+---
+title: "Spatial layout"
+author: "Seren Villwock"
+date: "7/29/2021"
+output: html_document
+---
+
+
+```{r, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(hrbrthemes)
+library(ggpubr)
+library(RColorBrewer)
+
+setwd("~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Data_backup/")
+
+phenos = read.csv("./master_SN_2021_phenotypes_sampled_cleaned.csv")
+pedigree = read.csv("./21.GS.C6.SN.Student2.IB_pedigree.csv")
+
+master = merge(phenos, pedigree, by.x="accession_name", by.y="progeny.name", all.x=TRUE)
+write.csv(master, "master_SN_2021_phenotypes_sampled_clean_pedigree.csv")
+
+```
+
+
+```{r}
+#The field is divided into two parts separated by a road
+#Blocks 1, 2, 3, & 4 are in megablock 1 and blocks 5 & 6 are in megablock 2
+
+master$megablock = NA
+master$megablock[master$block == 1 | master$block == 2 | master$block == 3  | master$block == 4] <- 1
+master$megablock[master$block == 5 | master$block == 6] <- 2
+
+#make unique name for block/row combination 
+master$block.row = paste(master$block, master$row, sep=".")
+
+
+
+# use snaking row orientation to number either backwards or forwards
+# row_dir: "down" is towards corn (i.e. down of block 1 is towards block 4), "up" is towards main road
+
+
+# plant_pos is plant's number in order of the row
+master$plant_pos = ave(master$row_dir, master$block.row,
+              FUN=function(x) if (x[1]=="down") { seq_along(x) } else { rev(seq_along(x)) })
+
+
+# plant_pos_scaled is a number from 0 to 1 representing the plant's position within the row relative to the ends of the row
+# (because the rows are the same length despite having different number of plants per row)
+scale.row = function(x){
+  if (x[1]=="down") { y = seq_along(x) } else { y = rev(seq_along(x)) }
+  (y-min(y))/(max(y)-min(y)) # scale between 0 and 1
+  }
+
+master$plant_pos_scaled = ave(master$row_dir, master$block.row,
+              FUN=function(x) scale.row(x) )
+
+
+#Manually fix the first and last partial rows:
+master$plant_pos_scaled[master$block.row == 1.7] = seq(from=0.3, to=1, length.out = length(master$plant_pos_scaled[master$block.row == 1.7]))
+
+master$plant_pos_scaled[master$block.row == 6.4] = seq(from=1, to=0.25, length.out = length(master$plant_pos_scaled[master$block.row == 6.4]))
+
+```
+
+
+```{r}
+# Make a spatial heat map of plant height & stem diameter in the field for each block:
+
+master$block = as.factor(master$block)
+
+#clean NA values
+tograph = master[master$row>0 & !is.na(master$block),]
+
+
+#tograph.m1 = master[master$row>0 & !is.na(master$block) & master$megablock == 1,]
+#tograph.m2 = master[master$row>0 & !is.na(master$block) & master$megablock == 2,]
+
+filepath= "~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/"
+#for saving graphs
+```
+
+```{r}
+# Plot
+make.heatmap.facet = function(trait, colors, midpoint, title){
+  
+    heatmap1= ggplot(data= tograph, 
+                     aes_string("row", "plant_pos_scaled", 
+                      fill= trait, height=18, width=0.75)) + 
+      coord_flip() +
+      scale_x_reverse() +
+      geom_tile() +
+      scale_fill_gradient2(low=colors[1], mid= colors[2], high=colors[3], midpoint= midpoint, 
+                           na.value = "white", name=title) +
+      #ggtitle(title) +
+      theme(axis.text.x=element_blank(), 
+            axis.line.x = element_blank(), 
+            axis.title.x = element_blank(),
+            axis.ticks.x = element_blank(),
+            axis.text.y = element_blank(),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank()) +
+      facet_wrap(~block, ncol = 4, dir="h", as.table = TRUE) +
+      theme(strip.background = element_blank(), strip.text = element_blank())
+    
+    print(heatmap1)
+    
+    #allblocks = ggarrange(heatmap2,heatmap1, ncol = 2)
+    #print(allblocks)
+}
+
+
+
+height = make.heatmap.facet(trait="plant_height",  colors= brewer.pal(6, "Greens")[c(1,3,6)],
+                   midpoint= 100, title="plant height in cm")
+
+stems = make.heatmap.facet(trait="stem_diam", colors = brewer.pal(3, "Blues") 
+                   midpoint= 20, title="stem diameter in mm")
+
+
+
+ggsave(plot=height, filename = paste0(filepath,"heatmap_plant_height.png"), 
+       height = 6, width = 16)
+ggsave(plot=stems, filename = paste0(filepath,"heatmap_stem_diameter.png"), 
+       height = 6, width = 16)
+
+
+```
+
+
+Make histograms:
+```{r}
+blues = brewer.pal(8, "Blues")
+
+ggplot(data=tograph, aes(x=plant_height)) +
+  geom_histogram(binwidth=10, fill=blues[4], color="#e9ecef") +
+  xlab("plant height in cm")
+
+ggsave(filename = paste0(filepath,"histogram_plant_height.png"),
+       height = 2.5, width = 3.5)
+
+ggplot(data=tograph, aes(x=stem_diam)) +
+  geom_histogram(binwidth=2, fill=blues[4], color="#e9ecef") +
+  xlab("basal stem diameter in mm")
+
+ggsave(filename = paste0(filepath,"histogram_stem_diameter.png"),
+       height = 2.5, width = 3.5)
+
+
+# ggplot(data=tograph, aes(x=branch_type)) +
+#   geom_bar(fill=blues[4], color="#e9ecef") +
+#   xlab("branching type")
+```
+
+Categorical to continuous variable demonstration:
+```{r}
+tograph$fake_vigor = NA
+tograph$fake_vigor[tograph$plant_height <= 90] <- 3
+tograph$fake_vigor[tograph$plant_height > 90 & tograph$plant_height < 125] <- 5
+tograph$fake_vigor[tograph$plant_height >= 125] <- 7
+
+
+ggplot(data=tograph, aes(x=fake_vigor)) +
+   geom_bar(fill=blues[4], color="#e9ecef") +
+   xlab("vigor score") +
+  scale_x_continuous(breaks= c(3,5,7))
+
+ggsave(filename = paste0(filepath,"histogram_hypothetical_vigor_example.png"),
+       height = 3, width = 4.5)
+```
+
+Which were genotyped:
+```{r}
+ggplot(data= tograph, aes(row, plant_pos_scaled, 
+                      fill= genotyped, height=18, width=0.75)) + 
+      coord_flip() +
+      scale_x_reverse() +
+      geom_tile() +
+      #ggtitle(title) +
+      theme(axis.text.x=element_blank(), 
+            axis.line.x = element_blank(), 
+            axis.title.x = element_blank(),
+            axis.ticks.x = element_blank(),
+            axis.text.y = element_blank(),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank()) +
+      facet_wrap(~block, ncol = 4, dir="h", as.table = TRUE) +
+      theme(strip.background = element_blank(), strip.text = element_blank())
+    
+```
+
+
+

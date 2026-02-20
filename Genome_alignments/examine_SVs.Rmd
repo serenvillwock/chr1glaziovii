@@ -1,0 +1,149 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-10-09"
+---
+
+
+```{r}
+library(tidyverse)
+library(vcfR)
+library(scales)
+```
+
+
+```{r}
+SVs <- read.vcfR("./SV_variants_svim-asm.vcf.gz", verbose = TRUE )
+```
+
+```{r}
+# Get variant info
+SVs_INFO <- extract_info_tidy(SVs)
+table(SVs_INFO$SVTYPE)
+
+
+
+# Calculate length for inversions:
+SVs_INFO$START = SVs@fix[,"POS"]
+SVs_INFO <- as.data.frame(SVs_INFO)
+
+SVs_INFO_len = SVs_INFO %>% mutate(LENGTH = case_when(SVTYPE=="INV" ~ abs(as.numeric(START)-as.numeric(END)),
+                                                      T ~ abs(SVLEN)) ) 
+
+
+# Combine duplication types since thtere is only one DUP:INT:
+SVs_INFO_len$SVTYPE[grep("DUP", SVs_INFO_len$SVTYPE)] <- "DUP"
+table(SVs_INFO_len$SVTYPE)
+```
+
+
+```{r}
+# Subset for inversions specifically:
+INVS_INFO = SVs_INFO_len %>% filter(SVTYPE=="INV")
+head(INVS_INFO)
+
+INVS_keys = INVS_INFO$Key
+INVS_vcf = SVs[INVS_keys,]
+write.vcf(INVS_vcf, file = "./inversions_only.vcf.gz")
+```
+
+
+```{r}
+#plot genome-wide SVs:
+ggplot(SVs_INFO_len, aes(x=LENGTH)) +
+    geom_histogram( aes(fill=SVTYPE), binwidth=100, alpha=0.8) +
+    ggtitle("SVs between M. glaziovii and M. esculenta") +
+  xlim(0, 20000) +
+  scale_y_log10() +
+  ylab("Number of variants (log scale)") +
+  xlab("Length of structural variant (bp)") +
+  scale_fill_discrete(name = "SV type", labels = c("Deletion", "Duplication", "Insertion", "Inversion"))
+
+ggsave(file="./svim_figures/genome-wide-SV-lengths-hist.png", width=7, height=3, units="in")
+
+
+#plot genome-wide by type:
+ggplot((SVs_INFO_len %>% filter(SVTYPE != "BND")), aes(x = (LENGTH/1000))) +
+  geom_histogram(aes(fill = SVTYPE), binwidth = 0.5, alpha = 1) +
+  facet_wrap(~ SVTYPE, scales = "free") +
+  ggtitle("SVs between M. glaziovii and M. esculenta") +
+  #xlim(0, 20) +
+  scale_y_log10() +
+  ylab("Number of variants (log scale)") +
+  xlab("Length of structural variant (kb)") +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  scale_fill_discrete(name = "SV type", labels = c("Deletion", "Duplication", "Insertion", "Inversion"))
+
+
+
+# Each SV type in its own panel:
+
+ggplot(SVs_INFO_len %>% filter(SVTYPE != "BND"), aes(x = (LENGTH/1000))) +
+  geom_histogram(aes(fill = SVTYPE), binwidth = 0.75, alpha = 1) +
+  facet_wrap(~ SVTYPE, scales = "free") +
+  ggtitle("SVs between M. glaziovii and M. esculenta") +
+  scale_y_continuous(
+    trans = "log1p",              # log(1 + y) transformation
+    breaks = c(0, 1, 10, 100, 1000, 10000),
+    name = "Number of variants (log scale)"
+  ) +
+  expand_limits(y = 10) +
+  xlab("Length of structural variant (kb)") +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  scale_fill_discrete(
+    name = "SV type",
+    labels = c("Deletion", "Duplication", "Insertion", "Inversion")
+  )
+
+ggsave(file="./svim_figures/genome-wide-SV-lengths-hist_paneled.png", width=8, height=5, units="in")
+```
+
+```{r}
+#Subset for chr 1 SVs:
+chr1_SVs_keys = which(data.frame(SVs@fix)$CHROM=="1")
+  
+chr1_SVs_INFO_len = SVs_INFO_len[chr1_SVs_keys,]
+
+table(chr1_SVs_INFO_len$SVTYPE)
+
+ggplot(chr1_SVs_INFO_len %>% filter(SVTYPE != "BND"), aes(x = (LENGTH/1000))) +
+  geom_histogram(aes(fill = SVTYPE), binwidth = 0.75, alpha = 0.8) +
+  #facet_wrap(~ SVTYPE, scales = "free_y") +
+  ggtitle("SVs on chromosome 1 between M. glaziovii and M. esculenta") +
+  scale_y_continuous(
+    trans = "log1p",              # log(1 + y) transformation
+    breaks = c(0, 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000),
+    labels = c(0, 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000),
+    name = "Number of variants (log scale)"
+  ) +
+  expand_limits(y = 10) +
+  xlab("Length of structural variant (kb)") +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  scale_fill_discrete(
+    name = "SV type",
+    labels = c("Deletion", "Duplication", "Insertion", "Inversion")
+  )
+
+ggsave(file="./svim_figures/Chr1-SV-lengths-hist.png", width=9, height=4, units="in")
+
+```
+
+
+```
+
+
+
+
+

@@ -1,0 +1,148 @@
+---
+title: "Glaziovii introgression deleterious allele enrichment"
+output: html_document
+date: "2024-12-05"
+---
+
+Data from Evan Long et al. 2023 on predicted deleterious alleles according to GERP scores:
+https://bitbucket.org/bucklerlab/cassava_load_and_gp/src/master/Data_Files/CassavaV7_BasemlSIFTDeleterious.tsv.gz
+
+Are there more deleterious alleles in the C1GI region than the rest of the genome?
+
+```{r}
+library(tidyverse)
+
+#Read in data
+DelTable <- read_tsv(file="/workdir/ssv42/glazioviiCET/data/CassavaV7_BasemlSIFTDeleterious.tsv", show_col_types = FALSE) %>%
+  filter(!is.na(Deleterious))
+
+#Subset table for C1GI region
+DelTable_C1GI <- DelTable %>% filter(CHROM == 1 & POS > 27000000) 
+
+#Subset table for non-C1GI region
+DelTable_nonC1GI <- DelTable %>% filter(!(CHROM == 1 & POS > 27000000)) 
+```
+
+Summarise:
+N: Total number of sites in the genome.
+M: Total number of 1s in the genome. (deleterious alleles)
+n: Total number of sites in the target region.
+k: Observed number of 1s in the target region. (deleterious alleles)
+```{r}
+Nsites_genome = sum(table(DelTable$Deleterious))
+Mdels_genome = table(DelTable$Deleterious)["1"]
+nsites_C1GI = sum(table(DelTable_C1GI$Deleterious))
+kdels_C1GI = table(DelTable_C1GI$Deleterious)["1"]
+
+
+#hypergeometric test:
+phyper(kdels_C1GI - 1, Mdels_genome, Nsites_genome - Mdels_genome, nsites_C1GI, lower.tail=FALSE)
+```
+
+Permutation test:
+```{r, eval=F}
+# Number of permutations
+n_permutations <- 10000
+permuted_del_counts <- numeric(n_permutations)
+set.seed(14850)
+
+
+# Perform permutation test
+for (i in 1:n_permutations) {
+  # Randomly select a sample of sites the same size as the C1GI region and count number of deleterious alleles
+  permuted_del_counts[i] <- sum(sample(DelTable_nonC1GI$Deleterious, size=nsites_C1GI), na.rm=T)
+}
+
+p_value <- mean(permuted_del_counts >= kdels_C1GI) 
+p_value
+#0.0128
+
+
+#mean number of del alleles from randomly selected non-C1GI sites
+mean(permuted_del_counts)
+```
+
+
+Visualize density of deleterious alleles:
+```{r}
+#compare density of deleterious and non-deleterious SNPs
+ggplot(DelTable %>% filter(!is.na(Deleterious)), aes(x = POS/1000000, fill = factor(Deleterious))) +
+  facet_wrap(~CHROM, scales = "free_x",nrow=3) + 
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"), name = "Deleterious alleles") +
+  labs(
+    title = "Density of putative deleterious alleles across the genome",
+    x = "Genomic Position (Mbp)",
+    y = "Density"
+  ) 
+
+#+theme_minimal()
+
+ggsave(file="./glazioviiCET/figures/Del_allele_enrichment_genomewide.png")
+
+
+
+
+# Chromosome 1 only
+ggplot(DelTable %>% filter(!is.na(Deleterious) & CHROM=="1"), aes(x = POS/1000000, fill = factor(Deleterious))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"), name = "Deleterious alleles") +
+  labs(
+    title = "Density of putative deleterious alleles across the genome",
+    x = "Genomic Position (Mbp)",
+    y = "Density"
+  ) 
+
+#+theme_minimal()
+
+ggsave(file="./glazioviiCET/figures/Del_allele_enrichment_chr1.png", width=6, height = 3, units="in", dpi=300)
+
+
+
+
+
+
+
+
+#compare proportion of deleterious and non-deleterious SNPs
+
+#Bin genome into intervals by chromosome
+genome_binned <- DelTable %>%
+  mutate(bin = cut(POS, breaks = seq(0, max(POS), by = 500000))) %>%
+  ungroup()
+
+# Count 0s and 1s per bin by chromosome
+genome_counts <- genome_binned %>%
+  group_by(CHROM, bin) %>%
+  summarise(n_deleterious = sum(Deleterious, na.rm=T),
+            n_alleles = length(Deleterious)) %>%
+  mutate(prop_deleterious = n_deleterious/n_alleles,
+         prop_nondeleterious = 1 - (n_deleterious/n_alleles),
+         bin_start = as.numeric(gsub("^\\(([^,]+),.*", "\\1", bin))/1000000) # Extract the start position in Mbp
+  
+
+# Plot counts per bin with facets
+ggplot(genome_counts, aes(x = bin_start, y = prop_deleterious)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  facet_wrap(~CHROM, scales = "free") +
+  theme_minimal() +
+  labs(title = "Proportion of Deleterious Alleles in 100kb Bins Across the Genome",
+       x = "Genomic Bin Position (Mbp)",
+       y = "Proportion of Deleterious Alleles")
+
+```
+
+
+Are the deleterious alleles concentrated on the glaziovii haplotype?
+
+Phase with Hap-IBD from Browning et al. 2020
+
+```{bash}
+wget https://faculty.washington.edu/browning/hap-ibd.jar
+java -Xmx8g -jar hap-ibd.jar gt=./glazioviiCET/ParentCETProgenyMerged.vcf.gz map= out=./glazioviiCET/output/hap_ibd_output
+```
+
+	gt=phased_data.vcf → Input phased VCF.
+	map=genetic_map.txt → (Optional) Genetic map for better IBD detection.
+	out=hap_ibd_output → Output file prefix.
+

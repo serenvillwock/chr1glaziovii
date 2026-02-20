@@ -1,0 +1,1209 @@
+---
+title: "Seedling nursery 2021 genotypes"
+author: "Seren Villwock"
+date: "8/23/2021"
+output: html_document
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/')
+
+library(tidyverse)
+```
+
+Load in genotype data: genotypes at 10 KASP SNPs distributed across the M. glaziovii introgression region on M. esculenta chromosome 1, ~25-35 Mb
+```{r, eval=FALSE}
+#KASP genotype data from August 2021 from seedling nursery 21.GS.C6.SN.Student2
+data = read.csv("Genotyping-014.039-01.csv/raw-genotypes.csv")
+
+#KASP validation report from Intertek, provides key of Intertek SNP ID and chromosome position numbers
+intk.report = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/Intertek_verification_report.csv")
+
+#Intertek submission form from KASP design, provides ref/alt alleles for the markers
+intk.sub = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Intertek_submission.csv") #this is the original submission file (not all of the SNPs became KASPs)
+
+#Make a name key for the KASP markers with the relevant allele and position information
+snp.name.key = left_join(intk.sub, intk.report, by = c("SNP.Name." = "Customer.SNP.ID")) %>% select(SNP.Name., Reference.Allele, Alternative.Allele, Intertek.SNP.ID)
+
+#Join position name and ref/alt alleles with the genotype data:
+genos = left_join(x=data, y=snp.name.key, by= c("SNPID" = "Intertek.SNP.ID"))
+
+#Save
+saveRDS(genos, file="SN_KASP_genotypes_alleles")
+```
+
+Load in the genotype data with attached allele and position information:
+```{r}
+genos = readRDS(file="SN_KASP_genotypes_alleles")
+```
+
+Classify into esculenta/glaziovii/heterozygous categories by matching the allele calls to the ref/alt alleles:
+(gives a warning about NAs where the marker was uncallable; this is okay.)
+```{r}
+#separate the call with colon notation into two separate alleles:
+genos = genos %>% separate(col=Call, sep=":", into = c("call1","call2")) 
+
+#define genotype classes:
+genos$class = NA
+genos$class[genos$call1 == genos$Reference.Allele & genos$call2 == genos$Reference.Allele] <- "esculenta"
+
+genos$class[genos$call1 == genos$Alternative.Allele & genos$call2 == genos$Alternative.Allele] <- "glaziovii"
+
+genos$class[genos$call1 == genos$Alternative.Allele & genos$call2 == genos$Reference.Allele] <- "heterozygous"
+```
+
+Look at how each of the 10 markers performed.
+Make cluster plots for each of the 10 KASP markers:
+(plots are saved in the Cluster_plots folder)
+```{r, eval=F}
+
+#range of noncallable SNPs per marker:
+#range(table((genos%>% filter(is.na(class)))$SNP.Name.))
+#79 to 96
+
+#Average number of individuals that could not be amplified per marker
+#mean(table((genos%>% filter(is.na(class)))$SNP.Name.))
+#86.5
+
+#average success rate
+#(3051-86.5)/3051
+#97.2%
+
+
+
+#Define list of KASP names:
+kasps = unique(genos$SNPID)
+
+#Define path to save the plots:
+filename = "~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/Cluster_plots/"
+
+#Plot the 10 markers each separately:
+for(i in 1:10) {
+  genos.sub = subset(genos, SNPID == kasps[i])
+  snpid = kasps[i]
+  
+  plot = ggplot(data=genos.sub, aes(x=X, y=Y)) +
+    geom_point(aes(color=class), alpha=0.5) +
+    ggtitle(snpid) 
+  
+  saveas = paste0(filename, snpid,".jpg")
+  
+  #ggsave(plot=plot, filename=saveas, width=7, height=7, units="in")
+  #print(plot)
+}
+
+#Plot the 10 markers in one figure:
+allplots <- ggplot(data=genos, aes(x=X, y=Y)) +
+    geom_point(aes(color=class), alpha=0.5) +
+    ggtitle("Glaziovii introgression KASP markers") +
+  facet_wrap(~ SNPID, ncol=2)
+
+#ggsave(plot=allplots, filename=paste0(filename,"all.png"), width=8, height=11, units="in")
+#print(allplots)
+
+
+
+
+
+#Print horizontal to fit on a single presentation slide
+allplots.horiz <- ggplot(data=genos, aes(x=X, y=Y)) +
+     geom_point(aes(color=class), alpha=0.5) +
+    geom_point( pch= 2, aes(bg = class)) +
+     ggtitle("Glaziovii introgression KASP markers") +
+   facet_wrap(~ SNP.Name., ncol=5)
+              
+#ggsave(plot=allplots.horiz, filename=paste0(filename,"all_horizontal_numeric_named.png"), width=10, height=5, units="in")
+
+
+
+#Print horizontal for seminar presentation slide:
+colorpalette_purple <- c("#F18C7E", "#8999D0", "#15338E")
+#sagegreen: #ED6A5A
+#colorscheme <- c("#fca54e","#4b7fc9", "#9dd672") 
+#old orange:#FBE2C5 (lighter), #ffa024 (brighter)
+#old light blue: #9AC5E5 
+#light green: #9dd672
+#teal: #72d6b8
+#old dark blue:"#616BC7"
+OGB <- c()
+
+genos$class.fac <- factor(genos$class, levels = c("esculenta", "heterozygous", "glaziovii", "NA"))
+
+
+
+#plot without checks labeled:
+
+allplots.horiz.color.1 <- ggplot(data=genos, aes(x=X, y=Y)) +
+  geom_point(aes(color=class.fac), alpha=0.5) +
+  ggtitle("Glaziovii introgression KASP markers") +
+  facet_wrap(~ SNPID, ncol=5) + 
+  scale_color_manual(name= "glaziovii allele dosage",
+                     values=colorpalette_purple,
+                     labels=c("0","1","2"))
+
+#print high res
+ragg::agg_png("all_horizontal_color_highres_unlabel.png", width = 20, height = 9, units = "in", res = 320, scaling=2)
+allplots.horiz.color.1
+dev.off()
+
+
+
+#plot with checks labeled:
+allplots.horiz.color <- ggplot(data=genos, aes(x=X, y=Y)) +
+  geom_point(aes(color=class.fac), alpha=0.5) +
+  ggtitle("Glaziovii introgression KASP markers") +
+  facet_wrap(~ SNPID, ncol=5) + 
+  scale_color_manual(name= "glaziovii allele dosage",
+                     values=colorpalette_purple,
+                     labels=c("0","1","2")) +
+  geom_point(data=subset(genos, SubjectID == "escxglaz_basal_branch_A39710" | 
+                          SubjectID == "escxglaz_main_A39711"), #label het checks
+                         pch = 23, color = "black", fill = "#8999D0") +
+  geom_point(data=subset(genos, #label hom glaz checks
+                          SubjectID == "glaz_middle_A39712" | 
+                          SubjectID == "glaz_right_A39713" |
+                          SubjectID == "glaz_left_A39714"),
+                         pch = 23, color = "white", fill = "#15338E") 
+  
+
+
+#print high res
+#ragg::agg_png("all_horizontal_color_highres.png", width = 20, height = 9, units = "in", res = 320, scaling=2)
+allplots.horiz.color
+#dev.off()
+
+#print high res points for pch legend:
+#ragg::agg_png("diamond_pch.png", width = 5, height = 5, units = "in", res = 320, scaling=1)
+ggplot()+
+  geom_point(data=data.frame(1,2), aes(x=X1, y=X2),
+             pch = 23, color = "white", fill = "#15338E", size=10, stroke=2) +
+  geom_point(data=data.frame(1,3), aes(x=X1, y=X3),
+             pch = 23, color = "black", fill = "#8999D0", size=10, stroke=2) +
+  ylim(1.9,3.2) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+#dev.off()
+
+#ggsave(plot=allplots.horiz.color, filename=paste0(filename,"all_horizontal_color.png"), width=16, height=8, units="in")
+
+
+
+#Make NExtGen annual meeting poster version:
+
+#ragg::agg_png("KASP1_cluster_poster.png", width = 10.4, height = 8, units = "in", res = 320, scaling=3)
+
+ggplot(data=genos.sub, aes(x=X, y=Y)) +
+    geom_point(aes(color=class), alpha=0.5) +
+    ggtitle("KASP#1 of 10") +
+    scale_color_manual(values=c(OGBcolors[1], OGBcolors[3], OGBcolors[2])) 
+#ggsave(filename="KASP_cluster_plot_for_NextGen_poster.png")
+
+dev.off()
+```
+
+***
+Characterize the introgression status of the individuals by their KASP genotypes:
+***
+
+```{r}
+#Name variable to describe glaziovii status:
+genos$glazstatus = NA
+genos$glazstatus[genos$class == "glaziovii"] <- 2
+genos$glazstatus[genos$class == "heterozygous"] <- 1
+genos$glazstatus[genos$class == "esculenta"] <- 0
+
+saveRDS(genos, file="SN_genos_classified.RDS")
+
+#Sum by total glaziovii allele dosage for sorting by introgression status:
+totalglaz = aggregate(glazstatus ~ SubjectID, FUN=sum, data=genos)
+colnames(totalglaz) = c("SubjectID", "totalglaz")
+genos.sorted = left_join(genos, totalglaz, by="SubjectID") %>%
+  mutate(SubjectID = fct_reorder(SubjectID, totalglaz))
+  #use fct_reorder to reorder a factor by another variable with duplicate levels 
+  #and have ggplot respect the order
+
+
+#Print figure of introgression status:
+# tiff("~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/SN_introgr_status", units="px", width=1000, height=12000, res=400)
+
+# genos.sorted %>% ggplot() +
+#   geom_point(aes(x=SNP.Name., y=SubjectID, color=class), size=0.0001) +
+#   scale_color_manual(values=c("#FFFFFF", "#0066FF", "#FF9900", "gray")) +
+#   scale_x_continuous(name="Chromosome 1 Mbp", breaks=c(unique(genos$SNP.Name.))) +
+#   scale_y_discrete(name="Sample") +
+#   theme_dark() +
+#   theme(axis.text.y = element_blank(), axis.text.x = element_text(size=4, angle=90))
+
+# dev.off()
+
+#print figure very tall and long (high res and able to zoom in to see individuals):
+# ggsave(
+#   filename= "~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/SN_introgr_status_ggsave.png",
+#   plot = last_plot(),
+#   device= png(),
+#   width = 3,
+#   height= 36,
+#   units = "in",
+#   dpi = 800
+# )
+
+#print figure zoomed out figure with good dimensions for slides:
+overview = genos.sorted %>% ggplot() +
+  geom_segment(aes(x=SNP.Name.-150000, xend=SNP.Name.+150000, y=SubjectID, yend=SubjectID, color=class)) +
+  scale_color_manual(values=c("#FFFFFF", "#0066FF", "#FF9900", "gray")) +
+  scale_x_continuous(name="Chromosome 1 Mbp", breaks=c(unique(genos$SNP.Name.))) +
+  scale_y_discrete(name="Sample") +
+  theme_dark() +
+  theme(axis.text.y = element_blank(), axis.text.x = element_text(size=4, angle=90))
+
+
+# ggsave(
+#   filename= "~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/SN_introgr_status_overview.png",
+#   plot = overview,
+#   device= png(),
+#   width = 5.5,
+#   height= 8,
+#   units = "in",
+#   dpi = 800
+# )
+```
+
+
+
+Identify and classify recombinance status:
+```{r}
+#select important columns and remove empty rows (neg controls), convert to wide format
+geno.sum = genos %>% dplyr::select(SubjectID, SNP.Name., glazstatus) %>% 
+  filter(SubjectID != "") %>% 
+  spread(SNP.Name., glazstatus) 
+geno.sum = geno.sum %>% 
+  mutate(row_sum = rowSums(geno.sum[, 2:11], na.rm=TRUE)) #sum the glaz status at each of the 10 markers
+
+
+#How many non-recombinant individuals?
+#Define function to identify non-recombinant samples:
+nonrecomb.funct = function(x) {
+  rowvar = var(as.numeric(as.vector(x[2:11])), na.rm=TRUE)
+  if(is.na(rowvar)){y <- NA} 
+    else if(rowvar == 0)   # test if the variance of the row is 0
+    {y <- "nonrecomb"} else {y <- "other"}
+  return(y)
+}
+
+# apply function over each row / individual sample
+geno.sum$Status = apply(geno.sum, 1, nonrecomb.funct) 
+
+#number of nonrecombinant individuals:
+table(geno.sum$Status)
+
+
+
+#Summarize how many individuals are completely homozygous esculenta or glaziovii:
+#note: the row_sum method doesn't correctly handle rows with NAs; NAs are filtered out first.
+geno.sum.complete = geno.sum %>% 
+  filter(complete.cases(.)) %>% 
+  mutate(homozyg = case_when(row_sum == 20 ~ "hom.glaz", 
+                  row_sum == 0 ~ "hom.esc"))
+table(geno.sum.complete$homozyg)
+
+
+#Where did the recombinations occur?
+#count recombinations observed between each marker pair:
+geno.sum.complete = geno.sum.complete %>% 
+  mutate(if_recomb = case_when(
+    geno.sum.complete[,2] != geno.sum.complete[,3] ~ "1_2", 
+    geno.sum.complete[,3] != geno.sum.complete[,4] ~ "2_3",
+    geno.sum.complete[,4] != geno.sum.complete[,5] ~ "3_4",
+    geno.sum.complete[,5] != geno.sum.complete[,6] ~ "4_5",
+    geno.sum.complete[,6] != geno.sum.complete[,7] ~ "5_6",
+    geno.sum.complete[,7] != geno.sum.complete[,8] ~ "6_7",
+    geno.sum.complete[,8] != geno.sum.complete[,9] ~ "7_8",
+    geno.sum.complete[,9] != geno.sum.complete[,10] ~ "8_9",
+    geno.sum.complete[,10] != geno.sum.complete[,11] ~ "9_10"))
+
+#table of recombination counts between markers:
+table(geno.sum.complete$if_recomb)
+#note: the markers are not evenly spaced (markers 1&2 and 9&10 are closer together than the others)
+
+
+#Count number that have at least one recombination: 
+#(could be inherited from a parent or occurred during this meiosis)
+sum(table(geno.sum.complete$if_recomb))
+#nrow(geno.sum.complete[geno.sum.complete$Status == "other",])
+
+
+#List the unique haplotypes:
+#define the haplotypes by pasting together the allele dosages
+#change NAs to Ns so they are one character
+haplotype.sum.wNA = geno.sum %>% rowwise() %>%
+  mutate(haplotype = str_replace_all(
+    paste(c(c_across(2:11)), sep="", collapse=""),
+    pattern="NA", replacement="N"))
+
+#simplified without NAs:
+haplotype.sum = geno.sum.complete %>% rowwise() %>%
+  mutate(haplotype = paste(c(c_across(2:11)), sep="", collapse=""))
+
+#List the unique haplotypes
+length(unique(haplotype.sum$haplotype))
+#214 unique haplotypes (from without NAs)
+length(unique(haplotype.sum.wNA$haplotype))
+#299 unique haplotypes with NAs (how do I consolidate which ones I think are the same except for NAs?)
+
+#Identify the rare haplotypes:
+#table(haplotype.sum$haplotype)
+
+#saveRDS(haplotype.sum, file= "SNhaplotype_summary.RDS")
+#saveRDS(geno.sum, file= "SNgenotypes_geno.sum.RDS")
+```
+
+
+
+#Next, 
+Match up the genotypes with the parental information to 1) check whether parents expected introgression status matches, and 2) look at segregation ratios.
+
+Read in name key, pedigree information, and parent expected status:
+```{r}
+#Reload genotypes
+geno.sum = readRDS("SNgenotypes_geno.sum.RDS")
+
+#Read in pedigree:
+pedigree = read.csv("../Data_backup/21.GS.C6.SN.Student2.IB_pedigree.csv")
+pedigree[pedigree==""] <- NA #fill blanks with NA
+##note: need to go through and manually add pedigree of individuals that were missing from original field layout
+
+#Count number of all parents:
+allparentlist = unique(c(pedigree$female.parent.accession, pedigree$male.parent.accession))
+length(allparentlist)-1 #minus 1 for NA 
+#41 parents
+#saveRDS(allparentlist[-42], file="allparentlist.RDS") #remove last NA
+
+#Count number of families:
+familylist = unique(str_match(pedigree$progeny.name, "F(.*?)P"))[,2] #extract family names
+length(familylist) 
+#272 families
+
+#Look up original intro status of parents:
+grouped.parents = read.csv("~/Desktop/Old_laptop/Glaziovii_introgression/parent_list_grp.csv")
+grouped.used.parents = unique(left_join(as.data.frame(allparentlist), grouped.parents[,1:2], by=c("allparentlist"="parent")))
+#write.csv(grouped.used.parents, file="~/Desktop/Research/Glaziovii_introgression/parent_list_used_grouped.csv")
+#there are 20 fully het parents, 20 with a recombination already
+
+
+### Merge pedigree with genotype data:
+#clean sample name to prepare for merge
+geno.sum$accession = str_replace(geno.sum$SubjectID, "_A[0-9]*", "") 
+
+#merge
+genos.ped = left_join(geno.sum, pedigree, by=c("accession" = "progeny.name"))
+
+
+
+#Count number of families in genotype data:
+genos.ped = genos.ped %>% rowwise %>%
+  mutate(family = paste(female.parent.accession, male.parent.accession, sep="_")) %>% as.data.frame()
+length(unique(genos.ped$family)) #259 families represented in genotyped samples
+
+#Count number of progeny from biparental families in genotype data:
+nrow(genos.ped %>% subset(type == "biparental")) #1248 progeny from biparental crosses
+nrow(genos.ped %>% subset(type == "open")) #1717 progeny from biparental crosses
+#total 2965 progeny, the other 43 are parents + wild controls
+
+
+
+
+
+
+#read in parental genotypes from the KASP validation:
+parent.clusters = readRDS("~/Desktop/Old_laptop/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.rds")
+#exp.glaz.dose = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/expected.glaz.dose.around.kasp.uplifted.keyed.parent-aggregated.rds")
+
+#read in expected glaziovii dosage based on IDMs (Wolfe et al. 2019):
+exp.glaz.dose = readRDS("~/Desktop/Old_laptop/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.10kasp.RDS") 
+exp.glaz.dose$mean.glazdose = as.numeric(exp.glaz.dose$mean.glazdose)
+
+#method 1: aggregate by mean glaz allele dosage at each marker
+exp.glaz.dose.wide = aggregate(mean.glazdose ~ parent + kasp, mean, data=exp.glaz.dose) %>%
+  spread(kasp, mean.glazdose) #convert to wide format with spread
+
+#method 2: aggregate by 'glaz.fac', 
+#a factor representing the best estimated allele dosage at each marker (rounded to 0, 1, or 2)
+exp.glaz.dose$glaz.fac = as.numeric(exp.glaz.dose$glaz.fac)
+exp.glaz.wide = aggregate(glaz.fac ~ parent + kasp, mean, data=exp.glaz.dose) %>%
+  spread(kasp, glaz.fac) #convert to wide format with spread to match genotype data format
+
+```
+
+Plot SN genotype clusters with checks, including parents
+```{r}
+genos$SNP.Name. <- as.character(genos$SNP.Name.)
+
+#rename parent data columns to match SN colnames before merging
+parent_mergable <- parent.clusters %>% 
+  mutate(class = ifelse(glaz.fac == 0, "esculenta", 
+                        ifelse(glaz.fac == 1, "heterozygous",
+                               ifelse( glaz.fac ==2, "glaziovii", NA)))) %>%
+  filter( kasp %in% unique(genos$SNP.Name. )) %>%  #subject down to 10 selected markers
+  mutate( class = as.factor( class )) %>%
+  filter( !is.na(class)) %>%
+  mutate( SNP.Name.  = kasp) %>%
+  mutate( SubjectID = parent) %>%
+  dplyr::select(SubjectID, SNP.Name., class, X, Y) %>%
+  filter(SubjectID == "TMS18F1279P0006") #add only check parent
+
+OGBcolors_order2 <- c("#FCAF42","#3D5EB5", "#98BF68")
+OGBcolors <- c("#FCAF42", "#98BF68", "#3D5EB5")
+
+
+#merge SN genotypes and parents together
+genosSN_par <- plyr::rbind.fill(genos, parent_mergable)
+genosSN_par$class <- as.factor(genosSN_par$class)
+genosSN_par$SNP.Name. <- as.factor(genosSN_par$SNP.Name.)
+genosSN_par$X <- as.numeric(genosSN_par$X)
+genosSN_par$Y <- as.numeric(genosSN_par$Y)
+
+
+#relevel factor so they appear in the right order:
+genosSN_par$class <- factor(genosSN_par$class, levels=c("esculenta", "heterozygous", "glaziovii"))
+
+#graph with checks labeled with different pch
+allplots.horiz.checks <- ggplot(data=genosSN_par, 
+                                aes(x=X, 
+                                    y=Y)) +
+  geom_point(aes(color=class), alpha=0.5) +
+  ggtitle("Glaziovii introgression KASP markers") +
+  facet_wrap(~ SNP.Name., ncol=5) + 
+  scale_color_manual(name= "glaziovii allele dosage",
+                     values=OGBcolors,
+                     labels=c("0","1","2")) +
+  geom_point(data=subset(genosSN_par, SubjectID == "escxglaz_basal_branch_A39710" | 
+                          SubjectID == "escxglaz_main_A39711"), #label het checks
+                         pch = 0, color = "white", fill = "#8999D0") +
+  geom_point(data=subset(genosSN_par, #label hom glaz checks
+                          SubjectID == "glaz_middle_A39712" | 
+                          SubjectID == "glaz_right_A39713" |
+                          SubjectID == "glaz_left_A39714"),
+                         pch = 5, color = "white", fill = "#15338E") +
+  geom_point(data=subset(genosSN_par, SubjectID == "TMS18F1279P0006_A38572" | 
+                          SubjectID == "TME419_A39622"), #label esc checks
+                         pch = 2, color = "black", fill = "#8999D0")
+  
+filename = "~/Desktop/Old_laptop/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/Cluster_plots/"
+
+
+### Manuscript fig. 2
+ragg::agg_png(paste0(filename, "all_horizontal_color_checks.png"), width = 10, height = 5, units = "in", res = 320, scaling=1.2)
+allplots.horiz.checks
+dev.off()
+
+```
+
+
+
+
+1) Compare the expected introgression status with the observed introgression status:
+########## left off here 10/25/21 Monday evening ##########
+
+Pull out parental genotypes:
+```{r}
+#select individuals from biparental crosses
+genos.crosses = genos.ped %>% filter(type == "biparental")
+
+
+#list biparental parents:
+parentlist = unique(c(genos.crosses$female.parent.accession, genos.crosses$male.parent.accession))
+
+#pull out parental genotypes:
+parent.genos = geno.sum[geno.sum$accession %in% parentlist,]
+```
+
+Check whether parents expected introgression status matches what was observed:
+```{r}
+cross.parents = read.table("~/Desktop/Research/Glaziovii_introgression/unique_parents_list.txt")[,1]
+
+#set up matrix for saving differences between observed and expected glaz dosage for each parent:
+#parent.status.diff = matrix(ncol=11, nrow=length(cross.parents))
+parent.status.diff = data.frame()
+
+for(i in 1:length(unique(cross.parents))){
+  # look up each parent
+  observed = geno.sum[grep(unique(cross.parents)[i], geno.sum$accession),1:11] %>% 
+    distinct(across(2:11)) #check for duplicates
+  if(nrow(observed) > 1) {print(i)}
+  expected = exp.glaz.wide[grep(unique(cross.parents)[i], exp.glaz.wide$parent),2:11]
+  if(nrow(expected) > 1) {print(i)}
+  if(nrow(observed) == nrow(expected) & nrow(observed)!=0){
+    diff = observed - expected
+  } else{ diff = rep(NA, 10)}
+  parent.status.diff = rbind(parent.status.diff, diff)
+  rownames(parent.status.diff)[i] = unique(cross.parents)[i]
+}
+
+
+#check if parental genotypes from KASP validation are the same as this summer:
+## Not finished: need to converted parent.clusters.10kasp to wide form first 
+
+parent.status.diff.2 = data.frame()
+
+# for(i in 1:length(parentlist)){
+#   # look up each parent
+#   observed = geno.sum[grep(parentlist[i], geno.sum$accession),1:11] %>%
+#     distinct(across(2:11)) #check for duplicates
+#   if(nrow(observed) > 1) {print(i)}
+#   expected = exp.glaz.wide[grep(parentlist[i], parent.clusters.10kasp.wide$parent),2:11]
+#   if(nrow(expected) > 1) {print(i)}
+#   if(nrow(observed) == nrow(expected) & nrow(observed)!=0){
+#     diff = observed - expected
+#   } else{ diff = rep(NA, 10)}
+#   parent.status.diff = rbind(parent.status.diff.2, diff)
+#   rownames(parent.status.diff.2)[i] = unique(cross.parents)[i]
+# }
+
+
+```
+
+
+
+
+
+Summarize the segregation ratios of biparental crosses:
+```{r}
+#which parents were in the field and sampled:
+#parentlist %in% geno.sum$accession
+#parentlist %in% parent.clusters.10kasp$parent
+# note: 3 additional parents were missing from field but present in KASP validation. 3 parents missing / never sampled
+
+OGBcolors <- c("#FCAF42","#98BF68", "#3D5EB5")
+
+savechisq <- data.frame()
+
+#Look at segregation ratios for each kasp marker one at a time:
+for(i in 2:11){
+  #list parents that are hets at kasp i
+  hetparents = parent.genos[parent.genos[,i] == 1, 'accession'] 
+  #select progeny for which both parents are het at kasp i
+  segprogeny = genos.crosses[genos.crosses$female.parent.accession %in% hetparents 
+                             & genos.crosses$male.parent.accession %in% hetparents,]
+  N = nrow(segprogeny)
+  #look at ratios
+  #print(table(segprogeny[,i+1])/sum(table(segprogeny[,i+1])))
+  
+  #chi-square test:
+  chitest = chisq.test(table(segprogeny[,i]), p=c(0.25,0.5,0.25))
+  #print(chitest$p.value)
+  
+  savechisq <- rbind(savechisq, 
+            c(N, round(chitest$statistic,2), chitest$p.value,
+              chitest$observed[3], chitest$expected[3]))
+
+  print(chitest$observed - chitest$expected)
+  
+  #make and save histograms:
+  #png(filename=paste0("../Segregation/genofrequencies_kasp",i-1,"_OGB.png"),   width=3.5, height=4, res=300, units="in")
+  
+  barplot(table(as.factor(segprogeny[,i]))/sum(table(as.factor(segprogeny[,i]))),
+          main = paste0("kasp #",i-1,"; n=",N,"; p=", signif(chitest$p.value, digits=3)),
+          xlab= "", #glaziovii allele dosage
+          col=OGBcolors, 
+          ylim=c(0,0.5)) 
+  #axis(2,at=seq(0,0.5,0.25))
+  #title(sub= paste0("p=", signif(chitest$p.value, digits=3)))
+  
+  #dev.off()
+}
+
+
+#saveRDS(segprogeny, file="../Segregation/ProgenyWithHetParents.RDS")
+#write.csv(hetparents, file="../Segregation/HetParentsList.csv")
+
+colnames(savechisq) <- c("N", "chi_stat", "pvalue", "obs_homglaz", "exp_homglaz")
+#write.csv(savechisq, file= "../Segregation/SNChiSq_Results_pextemd.csv")
+
+#print for presentation:
+#colorpalette_purple3<- c("#ECB6AC", "#88A5D6", "#11276A")
+
+#Print just for first marker as an example:
+  #list parents that are hets at kasp 1 (column 2)
+  hetparents = parent.genos[parent.genos[,2] == 1, 'accession'] 
+  #select progeny for which both parents are het at kasp i
+  segprogeny = genos.crosses[genos.crosses$female.parent.accession %in% hetparents 
+                             & genos.crosses$male.parent.accession %in% hetparents,]
+  N = nrow(segprogeny)
+  #look at ratios
+  #print(table(segprogeny[,i+1])/sum(table(segprogeny[,i+1])))
+  
+  #chi-square test:
+  chitest = chisq.test(table(segprogeny[,2]), p=c(0.25,0.5,0.25))
+  print(chitest$p.value)
+
+  #make and save histograms:
+  #png(filename=paste0("../Segregation/genofrequencies_kasp",i-1,".png"), 
+  #     width=3.5, height=4, res=300, units="in")
+  
+  dataforplot = table(as.factor(segprogeny[,6]))/sum(table(as.factor(segprogeny[,6])))
+  
+  #dev.off()
+
+
+#print for poster
+
+#Print just for first marker as an example:
+  #list parents that are hets at kasp 3 (column 4)
+  hetparents = parent.genos[parent.genos[,4] == 1, 'accession'] 
+  #select progeny for which both parents are het at kasp i
+  segprogeny = genos.crosses[genos.crosses$female.parent.accession %in% hetparents 
+                             & genos.crosses$male.parent.accession %in% hetparents,]
+  N = nrow(segprogeny)
+  #look at ratios
+  #print(table(segprogeny[,i+1])/sum(table(segprogeny[,i+1])))
+  
+  #chi-square test:
+  chitest = chisq.test(table(segprogeny[,4]), p=c(0.25,0.5,0.25))
+  print(chitest$p.value)
+
+  #make and save histograms:
+  #png(filename=paste0("../Segregation/genofrequencies_kasp",i-1,".png"), 
+  #     width=3.5, height=4, res=300, units="in")
+  
+  dataforplot = table(as.factor(segprogeny[,4]))/sum(table(as.factor(segprogeny[,4])))
+  
+  
+png(filename="KASP3_barplot.png", 
+       width=3.5, height=4, res=300, units="in")
+barplot(dataforplot,
+          main = paste0("kasp #",i-1,"; n=",N,"; p=", signif(chitest$p.value, digits=3)),
+          xlab= "",
+          col=OGBcolors, 
+          ylim=c(0,0.5))
+#axis(2,at=seq(0, 0.5,by=0.25),labels=seq(0, 0.5,by=0.25))
+  
+dev.off()
+```
+
+If both parents were heterozygous at that marker, you would expect:
+Aa x Aa = 1/4 AA, 1/2 Aa, 1/4 aa. 1:2:1
+
+
+Read in and clean up phenotype data:
+```{r}
+#read in phenotype data:
+phenos = read.csv("../Data_backup/master_SN_2021_phenotypes_sampled_cleaned.csv")
+
+#fill in NAs in broken stem column:
+phenos$broken_stem[is.na(phenos$broken_stem)] <- FALSE
+
+#clean up branch type factor levels:
+#there were some spaces in some words from the two different fieldapp tablets which make them count as separate levels:
+phenos$branch_shape[str_detect(phenos$branch_shape, "Compact")] <- "Compact" #detect partial string
+phenos$branch_shape[str_detect(phenos$branch_shape, "Cylindrical")] <- "Cylindrical"
+phenos$branch_shape[str_detect(phenos$branch_shape, "Open")] <- "Open"
+phenos$branch_shape[str_detect(phenos$branch_shape, "Umbrella")] <- "Umbrella"
+phenos$branch_shape <- as.factor(phenos$branch_shape)
+
+#clean up branch type factor levels:
+#if branch type was not recorded (for cylindrical/ not branching plant types), set it to be 1 to distinguish from true NAs
+phenos$branch_type[is.na(phenos$branch_type) & phenos$branch_shape == "Cylindrical"] <- "1"
+phenos$branch_type[phenos$branch_type == "" & phenos$branch_shape == "Cylindrical"] <- "1"
+#set NAs:
+phenos$branch_type[phenos$branch_type == ""] <- NA #set NA where blanks are remaining
+phenos$branch_shape[phenos$branch_shape == ""] <- NA #set NA where blanks are remaining
+
+
+#merge geno and pheno data:
+alldata = left_join(genos.ped, phenos, by= c("accession" = "accession_name"))
+
+
+#merge pedigree and pheno data:
+ped.pheno.dat = left_join(phenos, pedigree, by= c("accession_name" = "progeny.name"))
+
+#number of OP progeny alive in field: = 2965
+nrow(ped.pheno.dat[ped.pheno.dat$type == "open" & !is.na(ped.pheno.dat$plant_height),])
+#number of biparental progeny alive in field:  = 2097
+nrow(ped.pheno.dat[ped.pheno.dat$type == "biparental" & !is.na(ped.pheno.dat$plant_height),])
+
+saveRDS(alldata, file="alldata.RDS")
+```
+
+
+Summarize vigor scores by genotype:
+
+Plot histograms of vigor scores by genotype at each marker:
+```{r, eval=FALSE}
+#plant height:
+for(i in 2:11){ #go through each marker one at a time for plant height:
+  #height of homozygous esculenta which were not broken:
+  hist(alldata[alldata[,i] == 0 & alldata$broken_stem != TRUE, "plant_height"], 
+       main=paste0("height of individuals homozygous esc. at kasp#",i-1),
+       breaks=seq(10, 205, 15),
+       xlab="plant height in cm", 
+       col="dark green")
+  
+  #height of homozygous glaziovii which were not broken:
+  hist(alldata[alldata[,i] == 2 & alldata$broken_stem != TRUE, "plant_height"],
+       main=paste0("height of individuals homozygous glaz. at kasp#",i-1),
+       breaks=seq(10, 205, 15),
+       xlab="plant height in cm",
+       col="light green")
+}
+
+#stem diameter:
+for(i in 2:11){ #go through each marker one at a time for stem diameter:
+  #height of homozygous esculenta which were not broken:
+  hist(alldata[alldata[,i] == 0 & alldata$broken_stem != TRUE, "stem_diam"], 
+       main=paste0("stem diameter of individuals homozygous esc. at kasp#",i-1),
+       breaks=seq(5, 42, 2),
+       xlab="stem diameter in mm",
+       col="dark blue")
+  
+  #height of homozygous glaziovii which were not broken:
+  hist(alldata[alldata[,i] == 2 & alldata$broken_stem != TRUE, "stem_diam"],
+       main=paste0("stem diameter of individuals homozygous glaz. at kasp#",i-1),
+       breaks=seq(5, 42, 2),
+       xlab="stem diameter in mm",
+       col="light blue")
+}
+
+
+#branch type:
+for(i in 2:11){ #go through each marker one at a time for stem diameter:
+  #height of homozygous esculenta which were not broken:
+  barplot(table(alldata[alldata[,i] == 0 & !is.na(alldata$branch_type), "branch_type"]), 
+       main=paste0("branching type of individuals homozygous esc. at kasp#",i-1),
+       xlab="branch shape",
+       col="dark blue")
+
+  #height of homozygous glaziovii which were not broken:
+  barplot(table(alldata[alldata[,i] == 2 & !is.na(alldata$branch_type), "branch_type"]), 
+       main=paste0("branching type of individuals homozygous glaz. at kasp#",i-1),
+       xlab="branch shape",
+       col="light blue")
+}
+
+
+#branch shape:
+for(i in 2:11){ #go through each marker one at a time for stem diameter:
+  #height of homozygous esculenta which were not broken:
+  barplot(table(alldata[alldata[,i] == 0 & !is.na(alldata$branch_shape), "branch_shape"]), 
+       main=paste0("branching type of individuals homozygous esc. at kasp#",i-1),
+       xlab="branch shape",
+       col="dark blue")
+
+  #height of homozygous glaziovii which were not broken:
+  barplot(table(alldata[alldata[,i] == 2 & !is.na(alldata$branch_shape), "branch_shape"]), 
+       main=paste0("branching type of individuals homozygous glaz. at kasp#",i-1),
+       xlab="branch shape",
+       col="light blue")
+}
+```
+
+Associate vigor score and total glaz dosage:
+```{r}
+#count number of markers that are homozygous glaz per individual:
+alldata$homozyg_score = apply(alldata[,2:11], 1, function(x) length(which(x == 2)))
+
+#count number of markers that are heterozygous per individual:
+alldata$het_score = apply(alldata[,2:11], 1, function(x) length(which(x == 1)))
+
+
+#make a column counting family size:
+fam.tbl <- table(alldata$family)
+alldata$fam_size <- fam.tbl[match(alldata$family, names(fam.tbl))]
+alldata$fam_size[is.na(alldata$family)] <- 0
+alldata$fam_size[alldata$family == "NA_NA"] <- 0
+
+
+
+
+
+
+
+#model homozygosity score on plant height:
+homglaz.height.mod = lm(data=alldata, formula = plant_height ~ block/row + homozyg_score)
+summary(homglaz.height.mod)
+#notes: homozygosity score is significant (p=0.016889), R-squared is very small (0.008134)
+
+#model heterozygosity score on plant height:
+het.height.mod = lm(data=alldata, formula = plant_height ~ block/row + het_score)
+summary(het.height.mod)
+#notes: heterozygosity score is not significant
+
+#model homozygosity score on stem diameter:
+homglaz.stem.mod = lm(data=alldata, formula = stem_diam ~ block/row + homozyg_score)
+summary(homglaz.stem.mod)
+#notes: homozygosity score is significant (p=0.007942), R-squared = 0.007117
+
+#model heterozygosity score on stem diameter:
+het.stem.mod = lm(data=alldata, formula = stem_diam ~ block/row + het_score)
+summary(het.stem.mod)
+#notes: heterozygosity score is significant (p=0.000394), R-squared = 0.008973
+
+
+
+
+## Run linear models on all the markers:
+#Rename marker positions as KASP numbers for easier reference:
+colnames(alldata)[2:11] = c("KASP1", "KASP2", "KASP3", "KASP4", "KASP5", 
+                            "KASP6" ,"KASP7", "KASP8", "KASP9", "KASP10")
+
+#Make an X matrix defining the additive effects:
+Xa = alldata %>% rowwise %>%
+  mutate_at(.vars= 2:11, function(x){x - 1} ) #additive effect: -1, 0, 1 coding
+colnames(Xa)[2:11] = c("KASP1_Xa", "KASP2_Xa", "KASP3_Xa", "KASP4_Xa", "KASP5_Xa", "KASP6_Xa" ,"KASP7_Xa", "KASP8_Xa", "KASP9_Xa", "KASP10_Xa")
+
+Xd = alldata %>% rowwise %>%
+  mutate_at(.vars= 2:11, function(x){1-2*abs(x - 1)} ) #additive effect: -1, 0, 1 coding
+colnames(Xd)[2:11] = c("KASP1_Xd", "KASP2_Xd", "KASP3_Xd", "KASP4_Xd", "KASP5_Xd", "KASP6_Xd" ,"KASP7_Xd", "KASP8_Xd", "KASP9_Xd", "KASP10_Xd")
+#Xd is 1-2*abs(xa) 
+#dominance effect: -1 for heterozygote, 1 for homozygote
+
+
+#Make an X matrix that defines homozygous glaz alleles with T/F:
+glaz_X = alldata %>% rowwise %>%
+  mutate_at(.vars= 2:11, function(x){x > 1} ) #homozygous glaz effect: T for homozygous glaz, F otherwise
+
+#Merge glaz_X and Xa matrices:
+Xall = merge(glaz_X, Xa)
+XallXd = merge(Xall, Xd)
+
+
+#Associate homozygous glaz alleles with plant height:
+glaz_X_height_mod = lm(data=glaz_X, formula=
+     plant_height ~ (block/row) + KASP1 + KASP2 + KASP3 + KASP4 + 
+       KASP5 + KASP6  + KASP7 + KASP8 + KASP9 + KASP10)
+summary(glaz_X_height_mod) 
+#note: KASP markers 3 and 6 significantly negatively impact plant height; 
+#4 significantly positively impacts plant height
+
+#check opposite directions of markers 3 and 4 (from the boxplots it looks like they should both have negative effects on plant height)
+#these are both negative. Not sure why their effect estimates in the model have opposite directions. Maybe they are on either side of the intercept estimate
+#### check with t-tests: plant height ####
+KASP3_ttest = t.test(plant_height ~ KASP3, data = Xall)
+KASP3_ttest
+#note: p = 0.004651; the "TRUE" group with homozygous glaziovii at KASP 3 has a lower mean plant height
+
+KASP4_ttest = t.test(plant_height ~ KASP4, data = Xall)
+KASP4_ttest
+#note: p = 0.09864; the "TRUE" group with homozygous glaziovii at KASP 5 has a lower mean height but not significantly
+
+KASP6_ttest = t.test(plant_height ~ KASP6, data = Xall)
+KASP6_ttest
+#note: p = 0.000677; the "TRUE" group with homozygous glaziovii at KASP 6 has a lower mean height
+
+KASP8_ttest = t.test(plant_height ~ KASP8, data = Xall)
+KASP8_ttest
+#note: p = 0.4876; homozygous glaziovii at KASP 8 have only slightly (not significantly) lower mean height
+
+
+#look at distribution of families within each marker class at KASP8
+kasp8.glaz = subset(Xall, KASP8_Xa == 1)
+kasp8.other = subset(Xall, KASP8_Xa != 1)
+
+table(kasp8.glaz$family)
+table(kasp8.other$family)
+
+KASP8_ttest = t.test(plant_height ~ KASP8, data = Xall)
+#fill points by family
+
+
+
+
+
+#### check with t-tests: stem diameter ####
+KASP3_stem_ttest = t.test(stem_diam ~ KASP3, data = Xall)
+KASP3_stem_ttest
+#note: p = 0.03574; homozygous glaziovii at KASP 3 has a thinner stem
+
+KASP4_stem_ttest = t.test(stem_diam ~ KASP4, data = Xall)
+KASP4_stem_ttest
+#note: p = 0.4051; homozygous glaziovii at KASP 4 has a slightly thinner stem but not significant
+
+KASP6_stem_ttest = t.test(stem_diam ~ KASP6, data = Xall)
+KASP6_stem_ttest
+#note: p = 0.0003655; homozygous glaziovii at KASP 6 has a thinner stem
+
+KASP8_stem_ttest = t.test(stem_diam ~ KASP8, data = Xall)
+KASP8_stem_ttest
+#note: p = 0.1049; homozygous glaziovii at KASP 8 has a slightly thinner stem but not significant
+
+
+
+
+
+#Associate homozygous glaz alleles with plant height, controlling for family:
+glaz_X_height_fam_mod = lm(data=glaz_X, formula=
+     plant_height ~ (block/row) + family + KASP1 + KASP2 + KASP3 + 
+       KASP4 + KASP5 + KASP6  + KASP7 + KASP8 + KASP9 + KASP10)
+glaz_X_height_fam_summary = summary(glaz_X_height_fam_mod) 
+glaz_X_height_fam_summary
+tail(glaz_X_height_fam_summary$coefficients, n=11) #see KASP terms
+#note: R-squared is 0.4719, many family effects and many are significant, but no KASP markers
+
+
+#what are the sample sizes for these families? Should I filter for a certain family size?
+hist(table(alldata$family), main="family sizes")
+
+#filter for family size with more than 20:
+glaz_X_height_bigfam_mod = lm(data=subset(glaz_X, fam_size > 20), formula=
+     plant_height ~ (block/row) + family + KASP1 + KASP2 + KASP3 + 
+       KASP4 + KASP5 + KASP6  + KASP7 + KASP8 + KASP9 + KASP10)
+summary(glaz_X_height_bigfam_mod) 
+#note: no KASP markers are significant
+
+
+#Associate homozygous glaz alleles with plant height, controlling for seed parent:
+glaz_X_height_fem_mod = lm(data=glaz_X, formula=
+     plant_height ~ (block/row) + female.parent.accession + KASP1 + KASP2 + KASP3 + 
+       KASP4 + KASP5 + KASP6  + KASP7 + KASP8 + KASP9 + KASP10)
+summary(glaz_X_height_fem_mod) 
+#note: when only controlling for the maternal parent, KASP markers 3 and 4 are significant again
+
+
+
+#Associate homozygous glaz alleles with stem diameter:
+glaz_X_stem_mod = lm(data=glaz_X, formula=
+     stem_diam ~ (block/row) + KASP1 + KASP2 + KASP3 + KASP4 + 
+       KASP5 + KASP6  +KASP7 + KASP8 + KASP9 + KASP10)
+summary(glaz_X_stem_mod) 
+#note: KASP markers 3 and 6 negatively impact stem diameter; 
+#4 positively impacts stem diameter
+
+#Associate homozygous glaz alleles with stem diameter, controlling for family:
+glaz_X_stem_fam_mod = lm(data=glaz_X, formula=
+     stem_diam ~ (block/row) + family + KASP1 + KASP2 + KASP3 + KASP4 + 
+       KASP5 + KASP6 + KASP7 + KASP8 + KASP9 + KASP10)
+summary(glaz_X_stem_fam_mod) 
+tail(summary(glaz_X_stem_fam_mod)$coefficients, n=11) #see KASP terms
+
+
+
+#Associate additive + dominance glaz alleles with plant height:
+#(I think this might be repetitive: does the additive effect capture all of the information about homozygous glaz? )
+glaz_Xall_height_mod = lm(data=Xall, formula=
+     plant_height ~ (block/row) + KASP1 + KASP2 + KASP3 + KASP4 + KASP5 + 
+       KASP6 + KASP7 + KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+       KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa)
+summary(glaz_Xall_height_mod)
+#note: only the additive effects are significant. 
+#Marker 3 and marker 6 are negatively associated;
+#Marker 5 is positively associated with height
+
+
+#Associate additive + dominance glaz alleles with stem diameter:
+glaz_Xall_stem_mod = lm(data=Xall, formula=
+     stem_diam ~ (block/row) + KASP1 + KASP2 + KASP3 + KASP4 + KASP5 + 
+       KASP6 + KASP7 + KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+       KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa)
+summary(glaz_Xall_stem_mod)
+#note: the dominance effect at KASP4 positively affects stem diameter
+#KASP8 additive effect is positively associated with stem diameter
+#KASP6 and 7 are negatively associated with stem diameter
+
+
+
+#Associate only additive glaz alleles with plant height, controlling for family:
+glaz_Xa_height_mod = lm(data=Xall, formula=
+     plant_height ~ (block/row) + KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+       KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + family)
+summary(glaz_Xa_height_mod)
+head(summary(glaz_Xa_height_mod)$coefficients, n=12)
+
+
+
+#Associate additive + dominance glaz alleles with plant height, controlling for family:
+glaz_Xa_Xd_height_mod = lm(data=XallXd, formula=
+     plant_height ~ (block/row) + family + KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+       KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + KASP1_Xd + KASP2_Xd + KASP3_Xd + 
+       KASP4_Xd + KASP5_Xd +  KASP6_Xd + KASP7_Xd + KASP8_Xd + KASP9_Xd + KASP10_Xd)
+summary(glaz_Xa_Xd_height_mod)
+tail(summary(glaz_Xa_Xd_height_mod)$coefficients, n=25)
+#note: additive effect of KASP 8 is signifiant again
+#R-squared is 0.4768
+
+
+
+#Associate only additive glaz alleles with stem diameter, controlling for family:
+glaz_Xa_stem_mod = lm(data=Xall, formula=
+     stem_diam ~ (block/row) + KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+       KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + family)
+summary(glaz_Xa_stem_mod)
+head(summary(glaz_Xa_stem_mod)$coefficients, n=12)
+
+#Associate additive + dominance glaz alleles with stem diameter, controlling for family:
+glaz_Xa_Xd_stem_mod = lm(data=XallXd, formula=
+     stem_diam ~ (block/row) + family + KASP1_Xa + KASP2_Xa + KASP3_Xa + KASP4_Xa + KASP5_Xa + 
+       KASP6_Xa + KASP7_Xa + KASP8_Xa + KASP9_Xa + KASP10_Xa + KASP1_Xd + KASP2_Xd + KASP3_Xd + 
+       KASP4_Xd + KASP5_Xd +  KASP6_Xd + KASP7_Xd + KASP8_Xd + KASP9_Xd + KASP10_Xd)
+summary(glaz_Xa_Xd_stem_mod)
+tail(summary(glaz_Xa_Xd_stem_mod)$coefficients, n=25)
+#note: additive effect of KASP 8 is significant again,
+#dominance effect of KASP 3 is significant this time
+#R-squared is 0.4768
+
+
+
+#Run associations with unique haplotype IDs:
+alldata.haps = merge(alldata, haplotype.sum) #only haplotypes with no NAs (2909) are listed
+alldata.haps$haplotype = as.factor(alldata.haps$haplotype)
+hap_height_mod = lm(data=alldata.haps, formula=
+     plant_height ~ (block:row) + haplotype)
+summary(hap_height_mod)
+#so many covariates. some haplotypes are significant, but hard to tell what's going on
+
+#print list of unique haplotypes:
+unique.haps = levels(alldata.haps$haplotype)
+write.table(unique.haps, file="unique_haplotypes.txt", row.names=F, col.names = F, quote=F)
+
+
+
+
+```
+
+Boxplot graphs of marker effects on vigor:
+```{r}
+#convert to long form for boxplot:
+Xall_melt = Xall %>% pivot_longer(cols=c(KASP1:KASP10_Xa), names_to="KASPmarker")
+Xall_melt$KASPmarker = as.factor(Xall_melt$KASPmarker)
+Xall_melt$value = as.factor(Xall_melt$value)
+Xall_melt = Xall_melt %>% subset(!is.na(value)) %>%  filter(grepl("Xa", KASPmarker)) #select for additive effects
+
+
+glaz_X_melt = glaz_X  %>% pivot_longer(cols=c(2:11), names_to="KASPmarker")
+glaz_X_melt$KASPmarker = as.factor(glaz_X_melt$KASPmarker)
+glaz_X_melt$value = as.factor(glaz_X_melt$value)
+
+
+#homozygous glaz alleles on plant height
+#ggplot(data=subset(glaz_X_melt, !is.na(value)), aes(x=KASPmarker, y=plant_height, fill=value)) +
+#  geom_boxplot()
+
+
+#additive effects on plant height
+ggplot(data=Xall_melt, aes(x=KASPmarker, y=plant_height, fill=value)) +
+  geom_boxplot() +
+  xlab("KASP marker") +
+  ylab("Plant height (cm)") +
+  labs(fill = "Glaziovii allele dosage") +
+  scale_x_discrete(labels=c("KASP1", "KASP2", "KASP3", "KASP4", 
+       "KASP5", "KASP6", "KASP7", "KASP8", "KASP9", "KASP10")) +
+  theme(axis.text.x = element_text(angle=20))
+
+
+
+#additive effects on plant height add family color
+ggplot(data=subset(Xall_melt, KASPmarker == "KASP8_Xa"), aes(x=KASPmarker, y=plant_height, fill=value)) +
+  geom_boxplot() +
+  xlab("KASP marker") +
+  ylab("Plant height (cm)") +
+  geom_jitter(size=0.4, alpha=0.9, aes(color=as.factor(family))) +
+  theme(legend.position="none")
+
+  labs(fill = "Glaziovii allele dosage") +
+  scale_x_discrete(labels=c("KASP1", "KASP2", "KASP3", "KASP4", 
+       "KASP5", "KASP6", "KASP7", "KASP8", "KASP9", "KASP10")) +
+  theme(axis.text.x = element_text(angle=20))
+
+
+
+#additive effects on stem diameter
+ggplot(data=Xall_melt, aes(x=KASPmarker, y=stem_diam, fill=value)) +
+    geom_boxplot() +
+  xlab("KASP marker") +
+  ylab("Stem diameter (mm)") +
+  labs(fill = "Glaziovii allele dosage") +
+  scale_x_discrete(labels=c("KASP1", "KASP2", "KASP3", "KASP4", 
+       "KASP5", "KASP6", "KASP7", "KASP8", "KASP9", "KASP10")) +
+  theme(axis.text.x = element_text(angle=20))
+```
+
+
+
+
+
+
+
+
+
+
+
+Plot associations between homozygosity score and vigor:
+```{r, eval=FALSE}
+#plot vigor traits by hom & het scores:
+ggplot(alldata, aes(x=homozyg_score, y=stem_diam)) +
+  geom_point(col="light sea green") +
+  ylab("stem diameter in mm") +
+  scale_x_continuous(name="number of homozygous glaziovii markers", 
+                     breaks=c(0,5,10))
+
+ggplot(alldata, aes(x=homozyg_score, y=plant_height)) +
+  geom_point(col="dark green") +
+  ylab("plant height in cm") +
+  scale_x_continuous(name="number of homozygous glaziovii markers", 
+                     breaks=c(0,5,10))
+
+ggplot(alldata, aes(x=het_score, y=plant_height)) +
+  geom_point(col="dark green") +
+  ylab("plant height in cm") +
+  scale_x_continuous(name="number of homozygous glaziovii markers", 
+                     breaks=c(0,5,10))
+
+#plant architecture:
+ggplot(alldata, aes(x=het_score, y=plant_height)) +
+  geom_point(col="dark green") +
+  ylab("plant height in cm") +
+  scale_x_continuous(name="number of homozygous glaziovii markers", 
+                     breaks=c(0,5,10))
+
+```
+
+```{r}
+#homozygous esculenta plant height:
+ggplot(transform(alldata[alldata$Status == "nonrecomb" & alldata$`27643909` == 0,], "Discrete"=cut(plant_height, seq(4,200,5),include.lowest=T)), 
+       aes(plant_height, ..count..)) +
+  geom_point(col="dark green") +
+  ylab("plant height in cm")
+
+
+
+
+ggplot(alldata, aes(x=row_sum, y=plant_height)) +
+  geom_point() +
+  geom_smooth(method="lm")
+
+ggplot(alldata) +
+  geom_point(aes(x=row_sum, y=stem_diam))
+
+ggplot(alldata, aes(row_sum, ..count..)) +
+  geom_bar(branch_shape)
+
+
+ggplot(transform(alldata, "Discrete"=cut(row_sum, seq(0,20,5), include.lowest=T)), aes(Discrete, (..count..)/sum(..count..))) + 
+  geom_bar(aes(fill = branch_shape), position = "dodge") +
+  xlab("total glaziovii dosage across 10 markers")
+
+barplot(table(alldata$row_sum]), 
+       main=paste0("branching type of individuals homozygous esc. at kasp#",i-1),
+       xlab="branch shape",
+       col="dark blue")
+
+```
+
+
+
+
+
+
+
+
+
+Identify recombinants to select:
+```{r}
+
+```
+
+
+
+```{r, eval=F}
+#Read in plate key (actually not necessary):
+#platekey = read.csv("../21.GS.C6.SN.Student2_plate_coordinates_fixed.csv")[,c(5,8)] %>%
+#  separate(tissue_id, sep="-", into= c("field","plantnumb","individual"), remove=F)
+```
+

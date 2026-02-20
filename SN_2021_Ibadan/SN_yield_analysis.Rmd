@@ -1,0 +1,322 @@
+---
+title: "Analyze yield data"
+author: "Seren Villwock"
+date: "1/26/2022"
+output: html_document
+---
+
+
+Setup directory and load packages
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/')
+
+library(tidyverse)
+library(ggcorrplot)
+library(lme4)
+library(lmerTest)
+```
+
+Read in and clean data
+```{r}
+alldata = readRDS(file="Genotype_data/alldata.RDS")
+#clean by removing duplicate (equal) genotype for accession TMS14F1035P0004:
+alldata = alldata[-9,]
+
+#clean: TMS21F1987P0009 is duplicated with different genotypes (TMS21F1987P0009_A36969 & TMS21F1987P0009_A36867)
+# I believe TMS21F1987P0009_A36969 is correct based on original well positions; the other was mislabeled as TMS21F1987P0010
+alldata$accession[alldata$SubjectID == "TMS21F1987P0009_A36867"] <- "TMS21F1987P0010"
+alldata$SubjectID[alldata$SubjectID == "TMS21F1987P0009_A36867"] <- "TMS21F1987P0010_A36867"
+
+#saveRDS(alldata, file="Genotype_data/alldata_dupcleaned.RDS")
+
+
+Xall = readRDS(file="Genotype_data/Geno_matrices_Xa_Xd_Xglaz.RDS")
+#clean by removing duplicate (equal) genotype for accession TMS14F1035P0004:
+Xall = Xall[-9,]
+Xall$accession[Xall$SubjectID == "TMS21F1987P0009_A36867"] <- "TMS21F1987P0010"
+Xall$SubjectID[Xall$SubjectID == "TMS21F1987P0009_A36867"] <- "TMS21F1987P0010_A36867"
+
+harvest_data = read.csv("GS.C6.STUDENT2.HARVEST.DATASET.IB_harvest.csv") #nrow = 300 #SN
+#fill in a missing accession name:
+harvest_data$accession[harvest_data$plot_name == "21.GS.C6.SN.Student2.IB-plant5851-TMS21F2260P0065"] <- "TMS21F2260P0065"
+#remove duplicate rows:
+harvest_data[c(21,24), 6:14] <- NA
+
+clonal_data = read.csv("GS.C6.STUDENT2.HARVEST.DATASET.IB_clonal.csv") #nrow = 500 #CET 1MAP
+#note: accession TMS21F2086P0016 is duplicated in plot 749 and plot 1000
+```
+
+Traits are: root number (rtno), root size (rtsz), root weight (rtwt), chromameter values (L.1, a.1, b.1, L.2, a.2, b.2), dry matter percentage (dm), sprouting ability (sprout), vigor (vigor), cmd1s, cmd1i
+
+Combine genotype and phenotype data
+```{r}
+harv_data = merge(merge(merge(alldata, harvest_data, by="accession", all.x=T), 
+                        clonal_data, by.x = "accession", by.y="accession_name", all.x = T, all.y=T), 
+                  Xall[,c(4,16,18,26:45)], by="accession") #from Xa, add accession, block, row, Xas, Xds)
+
+#not all harvested lines have genotype data, and not all genotyped clones were harvested
+saveRDS(harv_data, file="SN21_harvest_genotypes_merged.RDS")
+
+
+#check phenotyped lines:
+#length(unique(harv_data$accession[!is.na(harv_data$rtno)])) #248 lines have rtwt, rtsz, and rtno data
+#length(unique(harv_data$accession[!is.na(harv_data$dm)])) #111 lines have dm data
+```
+
+```{r}
+plot(harv_data$stem_diam, harv_data$rtwt, xlab="stem diameter (mm)", ylab="root weight")
+plot(harv_data$stem_diam, harv_data$rtno, xlab="stem diameter (mm)", ylab="root number")
+plot(harv_data$stem_diam, harv_data$rtsz, xlab="stem diameter (mm)", ylab="root size")
+plot(harv_data$KASP3_Xa, harv_data$dm, xlab="KASP3_Xa", ylab="dry matter")
+hist(harv_data$dm)
+
+#correlation of stem diameter with yield traits: Pearson
+#cor.test(harv_data$stem_diam, harv_data$rtwt, method=c("pearson"))
+#cor.test(harv_data$stem_diam, harv_data$rtno, method=c("pearson"))
+#cor.test(harv_data$rtsz, harv_data$rtno, method=c("pearson"))
+
+#non-parametric correlation of stem diameter with yield traits
+#root traits are not normally distributed
+cor.test(harv_data$stem_diam, harv_data$rtwt, method="kendall")
+cor.test(harv_data$stem_diam, harv_data$rtno, method="kendall")
+cor.test(harv_data$rtsz, harv_data$rtno, method="kendall")
+cor.test(harv_data$stem_diam, harv_data$dm, method="kendall")
+
+
+#note: accession "TMS21F2260P0005" is an outlier with dm=50.65 -> could consider removing
+```
+
+Visualize haplotypes of phenotyped individuals:
+```{r}
+phenoed = harv_data[!is.na(harv_data$rtno),] #subset for phenotyped individuals
+colnames(phenoed)[3:12] <- seq(from=1, to=10) #relabel KASP markers 1 to 10
+
+#order for plot:
+phenoed.sorted = phenoed %>%
+  mutate(SubjectID = fct_reorder(SubjectID, row_sum)) %>%
+  pivot_longer(cols=3:12, names_to="KASP") %>%
+  mutate(KASP = KASP)
+
+phenoed.sorted$value = as.factor(phenoed.sorted$value)
+phenoed.sorted$KASP = as.numeric(phenoed.sorted$KASP)
+
+barwidth = 0.25
+
+#plot selection:
+phenoed.sorted %>% ggplot() +
+  geom_segment(aes(x=KASP - barwidth, y=SubjectID, 
+                   xend = KASP + barwidth, yend = SubjectID, color=value), size=0.5) +
+   scale_color_manual(values=c("#FFFFFF", "#FF9900", "#0066FF", "gray")) +
+   scale_x_continuous(name="KASP marker", breaks=c(unique(phenoed.sorted$KASP))) +
+   scale_y_discrete(name="Sample") +
+   theme_dark() +
+   theme(axis.text.y = element_blank(), axis.text.x = element_text(size=4, angle=90)) +
+  labs(color = "Glaziovii allele dosage")
+
+```
+
+
+
+
+Glaziovii models:
+
+Root weight
+```{r}
+#define model
+varlist = names(harv_data)[61:80] #all kasp effects
+#varlist = names(harv_data)[c(62,65,69)] #additive effects of markers 2, 5, 9
+
+
+fixed_part_rtwt <- paste0("rtwt ~ ", paste(varlist, collapse=" + "))
+random_part <- "(1|family)"
+rtwt_formula = formula(paste(fixed_part_rtwt, random_part, sep = " + ")) 
+  
+#run the full model
+rtwt_fullmod = lmerTest::lmer(formula = rtwt_formula, data=harv_data)
+summary(rtwt_fullmod)
+#singular fit when (1|block/row) is added, or when family is a fixed effect (but family can be random)
+
+
+#stepwise regression model to see which fixed effects can be dropped:
+step_rtwt_mod<- lmerTest::step(rtwt_fullmod, direction = "backward", reduce.random=F)
+
+#print
+step_rtwt_mod$fixed
+#eliminated all of the KASP markers 
+
+get_model(step_rtwt_mod)
+
+
+
+
+#try with just one marker:
+rtwt_tryformula = formula(paste("rtwt ~ KASP1_Xa + KASP1_Xd", "(1|family) + (1|block/row)", sep = " + "))
+trytest = lmerTest::lmer(formula = rtwt_tryformula, data=harv_data)
+summary(trytest)
+#no singular fit with just one kasp marker and both family and block/row random effects. 
+#Singular fit when additional markers are added
+
+```
+
+
+
+Root number
+```{r}
+#define model
+varlist = names(harv_data)[61:80] #all kasp effects
+#varlist = names(harv_data)[c(62,65,69)] #additive effects of markers 2, 5, 9
+
+
+fixed_part_rtno <- paste0("rtno ~ ", paste(varlist, collapse=" + "))
+random_part <- "(1|family)"
+rtno_formula = formula(paste(fixed_part_rtno, random_part, sep = " + ")) 
+  
+#run the full model
+rtno_fullmod = lmerTest::lmer(formula = rtno_formula, data=harv_data)
+summary(rtno_fullmod)
+#singular fit when (1|block/row) is added, or when family is a fixed effect (but family can be random)
+
+
+#stepwise regression model to see which fixed effects can be dropped:
+step_rtno_mod<- lmerTest::step(rtno_fullmod, direction = "backward", reduce.random=F)
+
+#print
+step_rtno_mod$fixed
+#eliminated all of the KASP markers except KASP7_Xd 
+
+get_model(step_rtno_mod)
+```
+
+
+
+
+GWAS-type method:
+Root weight
+```{r}
+varlist = names(harv_data)[61:80] #all kasp effects
+
+all_associations = data.frame()
+for(i in 1:10){ #for each marker
+  KASPi = varlist[c(i,i+10)] #select additive and dominance effects
+  
+  testi = lmerTest::lmer(formula = paste0("rtwt ~ ", paste(KASPi, collapse="+"), "+ (1|family) + (1|block:row)"), 
+                 data=harv_data)
+  
+  all_associations = rbind(all_associations, summary(testi)$coefficients[2:3,]) #bind marker effects but not intercept 
+}
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$marker <- rownames(all_associations)
+
+Bon.cutoff <- 0.05/20
+
+#graph results:
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with root weight") + 
+  theme(axis.text.x = element_text(angle=45))
+```
+
+Dry matter
+```{r}
+varlist = names(harv_data)[61:80] #all kasp effects
+
+all_associations = data.frame()
+for(i in 1:10){ #for each marker
+  KASPi = varlist[c(i,i+10)] #select additive and dominance effects
+  
+  testi = lmerTest::lmer(formula = paste0("dm ~ ", paste(KASPi, collapse="+"), "+ (1|family)"), 
+                 data=harv_data) #singular fit with block/row
+  
+  all_associations = rbind(all_associations, summary(testi)$coefficients[2:3,]) #bind marker effects but not intercept 
+}
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$marker <- rownames(all_associations)
+
+Bon.cutoff <- 0.05/20
+
+#graph results:
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with dry matter") + 
+  theme(axis.text.x = element_text(angle=45))
+```
+
+Root number
+```{r}
+varlist = names(harv_data)[61:80] #all kasp effects
+
+all_associations = data.frame()
+for(i in 1:10){ #for each marker
+  KASPi = varlist[c(i,i+10)] #select additive and dominance effects
+  
+  testi = lmerTest::lmer(formula = paste0("rtno ~ ", paste(KASPi, collapse="+"), "+ (1|family)"), 
+                 data=harv_data) #singular fit with block/row
+  
+  all_associations = rbind(all_associations, summary(testi)$coefficients[2:3,]) #bind marker effects but not intercept 
+}
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$marker <- rownames(all_associations)
+
+Bon.cutoff <- 0.05/20
+
+#graph results:
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with root number") + 
+  theme(axis.text.x = element_text(angle=45))
+```
+
+```{r}
+cor.test(harv_data$stem_diam, harv_data$vigor, method="kendall")
+cor.test(harv_data$plant_height, harv_data$vigor, method="kendall")
+
+#summary(lm(data= harv_data, vigor ~ stem_diam + plant_height))
+
+```
+
+
+Root size
+```{r}
+varlist = names(harv_data)[61:80] #all kasp effects
+
+all_associations = data.frame()
+for(i in 1:10){ #for each marker
+  KASPi = varlist[c(i,i+10)] #select additive and dominance effects
+  
+  testi = lmerTest::lmer(formula = paste0("rtsz ~ ", paste(KASPi, collapse="+"), "+ (1|family)"), 
+                 data=harv_data) #singular fit with block/row
+  
+  all_associations = rbind(all_associations, summary(testi)$coefficients[2:3,]) #bind marker effects but not intercept 
+}
+
+
+#Prepare to plot
+all_associations$logp <- -log10(all_associations$`Pr(>|t|)`)
+all_associations$marker <- rownames(all_associations)
+
+Bon.cutoff <- 0.05/20
+
+#graph results:
+ggplot(all_associations, aes(x=marker, y=logp))+
+  geom_point() +
+  labs(y="-log10(p)", x="KASP marker") +
+  geom_hline(yintercept = -log10(Bon.cutoff), linetype="dashed") +
+  ggtitle("Associations with root size") + 
+  theme(axis.text.x = element_text(angle=45))
+```
+

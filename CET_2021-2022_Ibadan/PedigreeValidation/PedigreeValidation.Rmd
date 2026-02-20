@@ -1,0 +1,283 @@
+---
+title: "AlphaAssign Pedigree Validation"
+author: "Seren Villwock"
+date: '2022-09-04'
+output: html_document
+---
+
+```{r echo=F}
+library(tidyverse)
+```
+
+
+Read in results from the sires-only run and make a pedigree file to put into the dams run
+```{r}
+sire_results <- read.table("Sires_only_run/AlphaAssignResults.sires",
+                          header=F)
+
+sire_validated <- sire_results[sire_results$chosen == 1,]
+#nrow(validated) = 203 parent/offspring pairs identified
+
+sire_ped <- data.frame(sire_validated[,1:2], rep(0, nrow(sire_validated)))
+
+write.table(sire_ped, col.names = F, row.names = F, file="Sires_only_run/one_parent_pedigree.txt", quote = F)
+```
+
+Read in results from the successive dams run
+```{r}
+dam_results <- read.table("Dams_run/AlphaAssignResultsDams.dams",
+                          header=F)
+
+dam_validated <- dam_results[dam_results$chosen == 1,]
+#nrow(dam_validated) #wow only 16 were validated
+
+full_ped <- read.table("Dams_run/AlphaAssignResultsDams.pedigree",
+                          header=F)
+both_parents_validated <- full_ped[full_ped$V2 != 0 & full_ped$V3 != 0,]
+
+both_parents_validated_names <- gsub(".*[...]", "", both_parents_validated$V1) 
+```
+
+
+
+Subset the progeny test population for individuals with validated pedigrees
+```{r}
+# Read in test set of seedling nursery progeny with heterozygous parents
+segprogeny <- readRDS("~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Segregation/ProgenyWithHetParents.RDS")
+
+valid_progeny <- segprogeny[segprogeny$accession %in% both_parents_validated_names,]
+
+#check if alpha assign parents match expected pedigree
+```
+
+
+There were only two parent-offspring trios from the test set that could be validated with AlphaAssign, and of these only one was correct and the other was a self.
+
+Adding more parents by somehow merging the vcf files would be helpful...
+
+I may have to try to validate pedigrees on the whole set (not just those that had two fully heterozygous parents) to estimate the overall error rate, and then apply this rate to the test set and see if it could explain the segregation distortion. 
+
+
+Next, I will try to put in the maternal parent from the written pedigree and test for the parental parent, assuming that pollen contamination is much more likely than mixing up the seeds from different plants.
+
+Read in genotyped sample tags
+```{r}
+sample_tags <- read.table("../sampletags.txt")
+sample_tags$accession <- gsub(".*[...]", "", sample_tags$V1) 
+
+# length(unique(sample_tags$accession))
+# There were 433 accessions genotyped
+# How many should there be?
+
+field_data <- read.csv("../CET2021_stem_architecture_data_all.csv") %>% 
+  filter(plot_number >= 561 & plot_number <= 1060) %>% 
+  filter(stem.diameter.measurement.in.cm.month.6.COMP.0000130 != 0) %>%
+  filter(!is.na(stem.diameter.measurement.in.cm.month.6.COMP.0000130)) %>%
+  filter(is.na(is_a_control)) %>%
+  select(1:9, 12:19, 22:23)
+
+length(unique(field_data$accession_name))
+#There are 444 unique accessions not including checks, so 11 were missed.
+
+#these are the missing ones:
+missing <- field_data[field_data$accession_name %in% sample_tags$accession ==F,
+                      c("plot_number","accession_name")] 
+
+write.csv(missing, "../CETunsampled_genos_list.csv")
+```
+
+Get the original recorded pedigrees for these genotyped individuals that were from biparental crosses
+```{r}
+genotyped<- field_data[field_data$accession_name %in% sample_tags$accession ==T,] %>%
+  dplyr::select(plot_number, accession_name, plot_id)
+
+pedigree = read.csv("~/Desktop/Research/Glaziovii_introgression/21.GS.C6.SN.Student2.IB_pedigree.csv")
+pedigree[pedigree==""] <- NA #fill blanks with NA
+
+#filter for just the biparental crosses
+bipar_ped <- pedigree %>% filter(type == "biparental")
+
+#join with the list of genotyped clones
+genod_bipar_ped <- genotyped %>% left_join(bipar_ped, 
+                                           by= c("accession_name" = "progeny.name")) %>%
+  filter(!is.na(female.parent.accession)) %>% # filter for only biparental cross progeny
+  left_join(sample_tags, by= c("accession_name" = "accession")) %>% #merge with dart sample IDs
+  left_join(sample_tags, #merge with maternal sample IDs
+                  by=c("female.parent.accession" = "accession")) %>% 
+  left_join(sample_tags, #merge with paternal sample IDs
+            by=c("male.parent.accession" = "accession")) %>%
+  rename(maternal.tag = V1.y, sample.tag = V1.x, paternal.tag = V1)
+  
+```
+
+Make a pedigree file for alpha assign that lists only the maternal parent
+```{r}
+#there are 268 candidate genotyped progeny with pedigrees
+#of these there are 230 where the maternal parent is present in the genotype data
+#and 183 where the male parent is present
+
+#male parents missing from CET genotype data:
+malepar_missing <- unique(genod_bipar_ped$male.parent.accession[genod_bipar_ped$male.parent.accession %in% sample_tags$accession == F])
+
+#female parents missing from CET genotype data:
+femalepar_missing <- unique(genod_bipar_ped$female.parent.accession[genod_bipar_ped$female.parent.accession %in% sample_tags$accession == F])
+
+
+#filter just for the ones for which both parents are present in CET genotype data:
+genod_ped_complt <- genod_bipar_ped %>% filter(!is.na(maternal.tag)) %>% filter(!is.na(paternal.tag))
+
+#well there's 155... not a huge sample size but let's try
+
+AAmaternalped <- data.frame(genod_ped_complt$sample.tag, 
+                            rep(0, nrow(genod_ped_complt)),
+                            genod_ped_complt$maternal.tag)
+
+write.table(AAmaternalped, row.names = F, col.names=F, quote=F,
+            file="./MaternalOnlyPedigree.txt")
+```
+
+
+Check results of the maternal only run to validate the inferred pollen parent:
+```{r}
+sire_scores <- read.table("Maternal_given_run/AlphaAssignResultsGivenMaternal.sires", header=T)
+ped_inferred <- read.table("Maternal_given_run/AlphaAssignResultsGivenMaternal.pedigree")
+
+#how many had both parents identified?
+#nrow(ped_inferred[ped_inferred$V2 !=0 & ped_inferred$V3 !=0, ])
+#only 9
+
+#how many had the pedigree-listed male parent verified?
+#merge with recorded pedigree
+ped_inferred_rec <- ped_inferred %>%
+  mutate(progeny.name = gsub(".*[...]", "", V1)) %>%
+  mutate(inf.male.name = gsub(".*[...]", "", V2)) %>%
+  left_join(pedigree, by="progeny.name") %>%
+  rename(progeny.tag = V1)
+
+
+male_match <- ped_inferred_rec %>% filter(inf.male.name == male.parent.accession)
+#nrow(male_match) = 15
+
+#only 15 could be verified...
+#try a different selection threshold on the sire scores
+#current threshold appears to be around 58700 and less
+
+
+# look at distribution of sire scores
+sire_scores_truth <- sire_scores %>% 
+  dplyr::select(id, candidate, score, chosen, estSire) %>%
+  left_join(ped_inferred_rec, by=c("id" = "progeny.tag"))
+
+#identify male parents that match between pedigree and alphaassign
+correct_matches <- sire_scores_truth %>%
+  filter(inf.male.name == male.parent.accession)
+
+hist(correct_matches$estSire) 
+hist(sire_scores$estSire)
+
+# I believe lower negative log-likelihood scores (estSire) is better (stronger evidence that the candidate is the true father)
+
+#picking a new threshold based on the distribution of scores for likely matches:
+new_threshold <- correct_matches[correct_matches$estSire < 55000,]
+#length(unique(new_threshold$progeny.name)) 
+#we now have 171 lines with validated parents
+#using the new threshold of 55,000
+```
+
+Look at the top pedigree file to see the selected male candidate parents there:
+```{r}
+ped_top <- read.table("Maternal_given_run/AlphaAssignResultsGivenMaternal.pedigree.top")
+
+ped_top_rec <- ped_top %>%
+  mutate(progeny.name = gsub(".*[...]", "", V1)) %>%
+  mutate(inf.male.name = gsub(".*[...]", "", V2)) %>%
+  left_join(pedigree, by="progeny.name") %>%
+  #filter(type == "biparental") %>%
+  rename(progeny.tag = V1)
+
+male_top_match <- ped_top_rec %>% 
+  filter(!is.na(male.parent.accession)) %>%
+  filter(inf.male.name == male.parent.accession)
+#nrow(male_top_match) = 134
+#wow, 134 correct matches. The default AlphaAssign threshold must have been very strict.
+
+# merge sires core information to look at the distribution for the top matches
+sire_scores_top <- sire_scores %>% 
+  dplyr::select(id, candidate, score, chosen, estSire) %>%
+  #mutate(top.male.name = gsub(".*[...]", "", candidate)) %>%
+  right_join(male_top_match, by=c("id" = "progeny.tag", "candidate" = "V2")) %>%
+  filter(estSire < 50000) #also filter to pass a score threshold
+#now there 112 matches
+
+
+#Compare score distribution for correct matches vs all sire scores
+#hist(sire_scores_top$estSire) 
+#hist(sire_scores$estSire)
+#the correct matches distribution seems to pretty well match the lower peak in all of the scores
+```
+
+
+Test for segregation distortion among these validated accessions:
+```{r}
+seg_totest <- unique(sire_scores_top$progeny.name)
+#length(seg_totest) #112
+
+#read in KASP marker genotypes
+geno.sum <- readRDS("~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/SNgenotypes_geno.sum.RDS") %>% 
+  mutate(progeny.name = gsub("_.*", "", geno.sum$SubjectID))
+
+# merge with pedigree validation results
+kasps_ped <- geno.sum %>%
+  right_join(sire_scores_top, by="progeny.name")
+
+
+#pull out parental genotypes:
+parentlist <- unique(c(pedigree$female.parent.accession, pedigree$male.parent.accession))
+parent.genos = geno.sum[geno.sum$progeny.name %in% parentlist,]
+
+
+#Test segregation ratios for each marker
+for(i in 2:11){
+  print(i)
+  #list parents that are hets at kasp i
+  hetparents = parent.genos[parent.genos[,i] == 1, 'progeny.name'] 
+  #select progeny for which both parents are het at kasp i
+  segprogeny = kasps_ped[kasps_ped$female.parent.accession %in% hetparents 
+                             & kasps_ped$male.parent.accession %in% hetparents,]
+  N = nrow(segprogeny)
+  #print(N)
+  
+  #look at ratios
+  #print(table(segprogeny[,i])/sum(table(segprogeny[,i])))
+  
+  #chi-square test:
+  chitest = chisq.test(table(segprogeny[,i]), p=c(0.25,0.5,0.25))
+  print(chitest$p.value)
+
+  #make and save histograms:
+  #png(filename=paste0("../Segregation/genofrequencies_kasp",i-1,".png"), 
+  #     width=3.5, height=4, res=300, units="in")
+  # 
+  barplot(table(as.factor(segprogeny[,i]))/sum(table(as.factor(segprogeny[,i]))),
+          main = paste0("kasp #",i-1,"; n=",N,"; p=", signif(chitest$p.value, digits=3)),
+          xlab= "", #glaziovii allele dosage
+          col=c("#E8E8E8","#EDAB2F","#437CD1"), 
+          ylim=c(0,0.5)) 
+  #axis(2,at=seq(0,0.5,0.25))
+  #title(sub= paste0("p=", signif(chitest$p.value, digits=3)))
+  
+  #dev.off()
+}
+```
+The above results came from selecting the individuals that had a most-likely inferred male parent that matched the pedigree recorded male parent. It looks like only marker 2 had significant segregation distortion.
+
+Of the 42 parents, 35 were genotyped with KASP markers and 28 were genotyped also with DartSeq in the CET. This limits our sample size. Genotypes do exist for all of the parents, they are just in dosage matrix form.
+
+I could try converting the new dartseq vcf to a dosage matrix, and try merging the matrices and using that for AlphaAssign and selecting heterozygous parents.
+
+```{r}
+library(genomic)
+
+
+```
+

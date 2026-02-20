@@ -1,0 +1,1030 @@
+---
+title: "CETselection_AlgDesignOptFederov"
+author: "Seren Villwock"
+date: "11/11/2021"
+output: html_document
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/')
+
+library(tidyverse)
+library(AlgDesign)
+library(genetics)
+library(reshape2)
+library(RColorBrewer)
+```
+
+Load genotype data:
+```{r}
+alldata= readRDS("alldata.RDS")
+parents = readRDS("allparentlist.RDS") #parent list 
+
+#add a column to indicate whether the sampled individual was a parent, and add a column indicating the family
+alldata.par = alldata %>% 
+  mutate(is.parent = case_when(
+  str_detect(SubjectID, paste(parents, sep="", collapse="|") ) ~ "T",
+  TRUE ~ "F")) %>% 
+  mutate(family = str_extract(SubjectID, "TMS(.*?)(?=P)"))
+
+#filter out individuals with a certain number of NAs (now set to no NAs)
+alldata.NAfilt = alldata.par[rowSums(is.na(alldata.par[, 2:11])) == 0,] 
+
+#filter out individuals with a certain number of NAs (now set to no NAs)
+alldata.NAfilt.max3 = alldata.par[rowSums(is.na(alldata.par[, 2:11])) < 4,] 
+#write.csv(alldata.NAfilt.max3[,c(14, 20, 26, 28)], file="SN_genotyped_maxNA3_table.csv")
+
+
+
+#filter out wild controls
+alldata.filt = alldata.NAfilt[-1:-6,] 
+
+#rename KASPs
+colnames(alldata.filt)[2:11] <- paste0("x", 1:10)
+
+#make a genotype class object for calculating LD (just to see)
+genoclass = makeGenotypes(data=alldata.filt, convert = c(2:11), method=genetics::as.genotype.allele.count)
+
+#no NA version:
+alldata.noNA = alldata.filt[complete.cases(alldata.filt[,c(2:11, 29)]), ]
+
+
+
+#calculate xa and xd:
+xa = alldata.filt[2:11] - 1
+colnames(xa) = paste0("xa_", 1:10)
+
+#xd2 = 
+xd = 1 - 2*abs(xa)  #heterozygote is +1, homozygotes are -1
+colnames(xd) = paste0("xd_", 1:10)
+
+xmatrix = cbind(alldata.filt, xa, xd)
+
+#simplified matrix to avoid missing values in other columns:
+candidates = cbind(xmatrix[,c(18, 29, 35:54)])
+#still missing values. going to have to exclude the parents:
+candidates = candidates[complete.cases(candidates), ]
+candidates$family = as.factor(candidates$family)
+
+#define parental rows to keep
+parentrows = which(xmatrix$is.parent == "T")
+```
+
+
+```{r}
+#function for plotting:
+plot_optselect = function(optsubset){
+  selected = alldata.filt[optsubset,]
+  colnames(selected)[2:11] <- seq(from=1, to=10)
+  
+  #order for plot:
+  selected.sorted = selected %>%
+    mutate(SubjectID = fct_reorder(SubjectID, row_sum)) %>%
+    pivot_longer(cols=2:11, names_to="KASP") %>%
+    mutate(KASP = KASP)
+  
+  selected.sorted$value = as.factor(selected.sorted$value)
+  selected.sorted$KASP = as.numeric(selected.sorted$KASP)
+  
+  barwidth = 0.25
+  
+  #plot selection:
+  selected.sorted %>% ggplot() +
+    geom_segment(aes(x=KASP - barwidth, y=SubjectID, 
+                     xend = KASP + barwidth, yend = SubjectID, color=value), size=0.5) +
+     scale_color_manual(values=c("#FFFFFF", "#FF9900", "#0066FF", "gray")) +
+     scale_x_continuous(name="KASP marker", breaks=c(unique(selected.sorted$KASP))) +
+     scale_y_discrete(name="Sample") +
+     theme_dark() +
+     theme(axis.text.y = element_blank(), axis.text.x = element_text(size=4, angle=90)) +
+    labs(color = "Glaziovii allele dosage")
+}
+
+
+plot_optselect_title = function(optsubset, plot_name){
+  selected = alldata.filt[optsubset,]
+  colnames(selected)[2:11] <- seq(from=1, to=10)
+  
+  #order for plot:
+  selected.sorted = selected %>%
+    mutate(SubjectID = fct_reorder(SubjectID, row_sum)) %>%
+    pivot_longer(cols=2:11, names_to="KASP") %>%
+    mutate(KASP = KASP)
+  
+  selected.sorted$value = as.factor(selected.sorted$value)
+  selected.sorted$KASP = as.numeric(selected.sorted$KASP)
+  
+  barwidth = 0.25
+  
+  #plot selection:
+  selected.sorted %>% ggplot() +
+    geom_segment(aes(x=KASP - barwidth, y=SubjectID, 
+                     xend = KASP + barwidth, yend = SubjectID, color=value), size=0.5) +
+     scale_color_manual(values=c("#FFFFFF", "#FF9900", "#0066FF", "gray")) +
+     scale_x_continuous(name="KASP marker", breaks=c(unique(selected.sorted$KASP))) +
+     scale_y_discrete(name="Sample") +
+     theme_dark() +
+     ggtitle(plot_name) +
+     theme(axis.text.y = element_blank(), axis.text.x = element_text(size=4, angle=90)) +
+    labs(color = "Glaziovii allele dosage")
+}
+
+
+
+plot_optselect_presentation = function(optsubset, plot_name, colorscheme, bckcolor, linesize=0.5){
+  selected = alldata.filt[optsubset,]
+  #colnames(selected)[2:11] <- seq(from=1, to=10) #to name by marker order
+  #colnames(selected)[2:11] <- c("27643909","28103607", "29449366", "31196826", "32865115","34462062", "35808218", "37123583", "38699792","39131171") #name by position
+  markerspacing <- c(1.3,2,3,4,5,6,7,8,9,9.7)
+  colnames(selected)[2:11] <- markerspacing
+  
+  #order for plot:
+  selected.sorted = selected %>%
+    mutate(SubjectID = fct_reorder(SubjectID, row_sum)) %>%
+    pivot_longer(cols=2:11, names_to="KASP") %>%
+    mutate(KASP = KASP)
+  
+  selected.sorted$value = as.factor(selected.sorted$value)
+  selected.sorted$KASP = as.numeric(selected.sorted$KASP)
+  selected.sorted$xaxisvalue = 
+  
+  barwidth = 0.21 #in marker order units
+  #barwidth = 150000 #in basepair units
+  
+  #plot selection:
+  selected.sorted %>% ggplot() +
+    geom_segment(aes(x=KASP - barwidth, y=SubjectID, 
+                     xend = KASP + barwidth, yend = SubjectID, 
+                     color=value), size=linesize) +
+    scale_color_manual(values=c(colorscheme, bckcolor)) + 
+    theme(axis.text.y = element_blank(), 
+          axis.text.x = element_text(size=12, angle=45, hjust=1, vjust=1),
+          panel.background= element_rect(fill=bckcolor),
+          panel.grid = element_blank(),
+          legend.key = element_rect(fill=bckcolor)) +
+    ##FFFFFF", "#FF9900", "#0066FF"
+     scale_x_continuous(name="Chr. 1 position (Mbp)",
+                        breaks= markerspacing,
+                        labels = c("27.6","28.1", "29.4", "31.2",
+                                "32.9","34.4", "35.8", "37.1",
+                                "38.7","39.1")) +
+     scale_y_discrete(name="Accession") +
+     ggtitle(plot_name) +
+    labs(color = "Glaziovii allele dosage")
+}
+
+
+
+every5hundred <- function(x) x[seq_along(x) %% 500 == 0]
+
+plot_optselect_poster = function(optsubset, plot_name, colorscheme, bckcolor, linesize=0.5){
+  selected = alldata.filt[optsubset,]
+  #colnames(selected)[2:11] <- seq(from=1, to=10) #to name by marker order
+  #colnames(selected)[2:11] <- c("27643909","28103607", "29449366", "31196826", "32865115","34462062", "35808218", "37123583", "38699792","39131171") #name by position
+  markerspacing <- c(1.3,2,3,4,5,6,7,8,9,9.7)
+  colnames(selected)[2:11] <- markerspacing
+  
+  #order for plot:
+  selected.sorted = selected %>%
+    mutate(SubjectID = fct_reorder(SubjectID, row_sum)) %>%
+    pivot_longer(cols=2:11, names_to="KASP") %>%
+    mutate(KASP = KASP)
+  
+  selected.sorted$value = as.factor(selected.sorted$value)
+  selected.sorted$KASP = as.numeric(selected.sorted$KASP)
+  #selected.sorted$xaxisvalue = 
+  
+  barwidth = 0.21 #in marker order units
+  #barwidth = 150000 #in basepair units
+  
+  #plot selection:
+  selected.sorted %>% ggplot() +
+    geom_segment(aes(x=KASP - barwidth, y=SubjectID, 
+                     xend = KASP + barwidth, yend = SubjectID, 
+                     color=value), size=linesize) +
+    scale_color_manual(values=c(colorscheme, bckcolor)) + 
+    theme(#axis.text.y = element_blank(), 
+          axis.text.x = element_text(size=9, angle=45, hjust=1, vjust=1),
+          panel.background= element_rect(fill=bckcolor),
+          panel.grid = element_blank(),
+          axis.line.x= element_line(size=0.5),
+          #panel.grid.major.x = element_line(color = "light gray",
+          #                              size = 0.5,
+          #                              linetype = 2),
+          legend.key = element_rect(fill=bckcolor),
+          axis.text.x.top = element_blank(),
+        axis.ticks.x.top = element_blank(),
+        axis.line.x.top = element_blank()) +
+     scale_x_continuous(name="Chr. 1 position (Mbp)",
+                        breaks= c(-18.5, -16, markerspacing),
+                        labels = c("10", "20", "27.6","28.1", "29.4", "31.2",
+                                "32.9","34.4", "35.8", "37.1",
+                                "38.7","39.1"),
+                        limits=c(-20,10)) +
+    scale_x_break(c(-15, 1.2),scales=4.5) +
+     scale_y_discrete(name="Accession", breaks=every5hundred, 
+                      labels= seq(500,3000,by=500)) +
+     ggtitle(plot_name) +
+    labs(color = "Glaziovii allele dosage") 
+}
+
+```
+
+
+
+
+OptFederov:
+
+```{r}
+#make the formula string
+#both effects:
+formStr_all <- paste0(" ~ ", paste0(colnames(xmatrix)[35:54], collapse=" + ")) #both xa and xd
+
+
+# How many candidates to keep and put in the evaluation experiment
+nObsToKeep <- 300
+
+
+# Use AlgDesign to choose the optimal subset of candidates (without parents) and dominance effect only
+#optSet <- optFederov(frml=formula(formStr), data=candidates, nTrials=nObsToKeep) 
+#singular with family and dominance effect effect. try just dominance effect
+#saveRDS(optSet, file="optSet_xd_only.RDS")
+
+optSet_all <- optFederov(frml=formula(formStr_all), data=xmatrix[,35:54], nTrials=nObsToKeep, rows=parentrows, augment=T) #include all the parents by default
+
+#saveRDS(optSet_all, file="optSet_xa_xd_parents_112921.RDS")
+
+#view subset:
+plot_optselect(optSet_all$rows)
+#ggsave(filename="optSet_xa_xd_parents_112921.png")
+
+
+#try adjusting max iterations:
+optSet_all_test <- optFederov(~., data=xmatrix[,35:54], nTrials=nObsToKeep, 
+                              rows=parentrows, augment=T, nRepeats=1000000000) 
+#include all the parents by default
+#saveRDS(optSet_all_test, file="optSet_xa_xd_parents_112921_nRepeat1bil_try3.RDS")
+
+plot_optselect(optSet_all_test$rows)
+
+```
+
+
+
+Try with Xa, Xd, and collapsed parent values:
+```{r}
+#Make columns with the possible parents as columns, and zeros or ones to indiciate which were used as the parents for the individual in that row
+
+tomelt_parents = xmatrix[,c(1, 15:16, 18)]
+
+melted_parents = as.data.frame(table(cbind.data.frame(SubjectID = tomelt_parents$SubjectID,
+                              Parents=c(tomelt_parents$female.parent.accession,
+                                        tomelt_parents$male.parent.accession))))
+
+parents_incidence = reshape(melted_parents, idvar = "SubjectID", timevar = "Parents", direction = "wide")
+colnames(parents_incidence)[2:42] = str_remove_all(colnames(parents_incidence)[2:42], pattern="Freq.")
+
+
+data_parentwide = merge(xmatrix, parents_incidence, by="SubjectID")
+#saveRDS(data_parentwide, file="data_parentwide.RDS")
+
+
+#make the formula string including the parent effects
+formStr_all_parindex <- paste0(" ~ ", paste0(colnames(data_parentwide)[35:95], collapse=" + ")) #Xas and Xds plus parent incidence
+
+
+# Run optFederov with xa, xd, parent effects, and included parental rows
+#select all variables by subsetting data frame and use '~.' to avoid formula error
+optSet_all_parindex_test <- optFederov(~., data=data_parentwide[,35:95], 
+                                  nTrials=nObsToKeep, rows=parentrows, augment=T) 
+#saveRDS(optSet_all_parindex, file="optSet_all_parindex_112921.RDS")
+
+plot_optselect(optSet_all_parindex$rows)
+
+
+
+#Try with repeats:
+optSet_all_parindex_rep <- optFederov(~., data=data_parentwide[,35:95], nTrials=nObsToKeep, 
+  rows=parentrows, augment=T, nRepeats = 10000) 
+#couldn't get this to run without singular design error. will try more times in loop.
+```
+
+
+Make a loop to attempt running optFederov many times:
+```{r}
+tryOptloop = function(iterations){
+  bo=0
+  while(bo!=iterations){
+    x = try( optFederov(~., data=data_parentwide[,35:95], nTrials=nObsToKeep, 
+                        rows=parentrows, augment=T)   )
+    if (class(x)=="try-error") {
+      #print("trying again")
+      bo <- bo+1
+      #print(bo)
+    } else{ 
+      tosave <- x 
+      print(bo)
+      break }
+  }
+  return(tosave)
+}
+
+#whiletester2 = tryOptloop(100)
+#saveRDS(whiletester2, file="optSet_all_parindex_112921_fromloop1.RDS")
+
+#optSet_all_parindex_rep = tryOptloop(100) #ran with nRepeats = 1000000
+#saveRDS(optSet_all_parindex_rep, file="optSet_all_parindex_112921_1milreps_fromloop.RDS")
+
+optSet_all_parindex = tryOptloop(100)
+#saveRDS(optSet_all_parindex, file="optSet_all_parindex_112921_fromloop2.RDS")
+saveRDS(optSet_all_parindex, file="optSet_all_parindex_112921_fromloop3.RDS")
+
+plot_optselect(optSet_all_parindex$rows)
+```
+
+
+
+
+Compare sets with and without parent effects:
+```{r}
+xmatrix_haps = as.data.frame(xmatrix %>% rowwise() %>%
+  mutate(haplotype = paste(c(c_across(2:11)), sep="", collapse="")))
+
+#make subsets
+optset_nopareff = xmatrix_haps[optSet_all$rows,]
+optset_wpareffs = xmatrix_haps[optSet_all_parindex$rows,]
+
+
+#how many families are represented in each subset?
+length(unique(optset_nopareff$family)) #145 families represented without parent effects
+length(unique(optset_wpareffs$family)) #201 families represented with parent effects
+
+
+#plot selections to visually compare
+plot_optselect_title(optSet_all$rows, 
+                     plot_name = "selected set without parent effects in model")
+#ggsave(filename="optSet_xa_xd_noparenteffects.png")
+
+plot_optselect_title(optSet_all_parindex$rows, 
+                     plot_name = "selected set with parent effects in model")
+#ggsave(filename="optSet_xa_xd_wparenteffects.png")
+
+
+
+#what is the overlap between sets?
+sum(optset_nopareff$haplotype %in% optset_wpareffs$haplotype) #241
+length(intersect(optset_nopareff$haplotype, optset_wpareffs$haplotype)) #98
+sum(unique(optset_nopareff$haplotype) %in% unique(optset_wpareffs$haplotype)) #98
+
+
+
+#compare number of recombinant vs nonrecombinant selections:
+table(optset_nopareff$Status)
+table(optset_wpareffs$Status)
+
+
+
+
+
+#check marker LD
+#make into genotype class objects for calculating LD 
+optset_nopareff_geno = makeGenotypes(data=optset_nopareff, convert = c(2:11), method=genetics::as.genotype.allele.count)
+
+optset_wpareffs_geno = makeGenotypes(data=optset_wpareffs, convert = c(2:11), method=genetics::as.genotype.allele.count)
+
+
+#calculate total LD between markers:
+test_totalLD.rsq = function(geno.data){
+  sum(LD(geno.data[,2:11])$`R^2`, na.rm=TRUE ) 
+}
+
+
+test_totalLD.rsq(optset_nopareff_geno) #11.10254
+test_totalLD.rsq(optset_wpareffs_geno) #14.09293
+#There is lower marker LD in the set optimized without parent effects 
+```
+
+
+
+Compare multiple iterations of the parent effects model optimization:
+```{r}
+#run in command line to avoid printing errors to markdown page
+optSet_all_parindex_1 = tryOptloop(1000)
+optSet_all_parindex_2 = tryOptloop(1000)
+optSet_all_parindex_3 = tryOptloop(1000)
+optSet_all_parindex_4 = tryOptloop(1000)
+optSet_all_parindex_5 = tryOptloop(1000)
+optSet_all_parindex_6 = tryOptloop(1000)
+optSet_all_parindex_7 = tryOptloop(1000)
+optSet_all_parindex_8 = tryOptloop(1000)
+optSet_all_parindex_9 = tryOptloop(1000)
+optSet_all_parindex_10 = tryOptloop(1000)
+
+saveall_optsets_wpar = list(optSet_all_parindex_1, optSet_all_parindex_2, optSet_all_parindex_3, optSet_all_parindex_4, optSet_all_parindex_5, optSet_all_parindex_6, optSet_all_parindex_7, optSet_all_parindex_8, optSet_all_parindex_9, optSet_all_parindex_10)
+
+#saveRDS(saveall_optsets_wpar, file="list10optSets_wparenteffects.RDS")
+
+
+
+
+#compare the 10 sets:
+#which has the lowest D value?
+Dvalues = c(optSet_all_parindex_1$D, optSet_all_parindex_2$D, optSet_all_parindex_3$D,
+            optSet_all_parindex_4$D, optSet_all_parindex_5$D, optSet_all_parindex_6$D,
+            optSet_all_parindex_7$D, optSet_all_parindex_8$D, optSet_all_parindex_9$D,
+            optSet_all_parindex_10$D)
+#set 10 has the lowest D value at 0.05709564
+
+
+#compare unique haplotypes in each of the 10 sets
+haplo_list = list()
+for(i in 1:10){
+  haplo_list[[i]] = xmatrix_haps[get(paste0("optSet_all_parindex_",i))$rows,]$haplotype
+}
+
+
+sum(haplo_list[[10]] %in% haplo_list[[10]])
+
+
+
+
+#save plots of each of the 10 sets
+for(i in 1:10){
+  plot_optselect_title(get(paste0("optSet_all_parindex_",i))$rows, 
+                     plot_name = paste0("set ", i, "of 10"))
+  ggsave(filename=paste0("optSet_xa_xd_wparenteffects_", i,".png"))
+}
+
+
+#saveRDS(optSet_all_parindex_10, file="optset10_best")
+#write.csv(xmatrix[optSet_all_parindex_10$rows, "SubjectID"], file= "optset10_best_list.csv")
+```
+
+
+
+Make list of final selection to share:
+```{r}
+optSet_all_parindex_10 = readRDS("optset10_best")
+
+CETselection = xmatrix[optSet_all_parindex_10$rows,]
+CETselection.export = CETselection[,c("accession", "plot_name", "plot_number", "block", "row", "is.parent")]
+
+#write.csv(CETselection.export, file= "CETselection_withplotname.csv")
+```
+
+
+
+
+
+Plots comparing full set and selected optimized set:
+```{r}
+#full set
+plot_optselect_title(1:nrow(alldata.filt), plot_name = "all 2903 accessions")
+#ggsave(filename="allSNgenotypes.png", width= 5, height=6, units="in")
+
+
+#selected set
+optSet_all_parindex_10 = readRDS("optset10_best")
+plot_optselect_title(optSet_all_parindex_10$rows, plot_name = "selection of 300 accessions")
+#ggsave(filename="selected300CET.png", width= 5, height=6, units="in")
+```
+
+
+Plots for presentation figures:
+```{r}
+optSet_all_parindex_10 = readRDS("optset10_best")
+alldata.filt <- readRDS("SN_genos_phenos_NAfiltered.RDS")
+
+
+#colorpalette_light <- c("#FBE2C5", "#6DAAD9", "#616BC7")
+#colorpalette_bright <- c("#fca54e","#9dd672","#4b7fc9") 
+#colorpalette_pink <- c("#a2bfe0","#cf7297", "#7a0f71")
+#colorpalette_pink2 <- c("#a2bfe0", "#9966d4" , "#de5068")
+#colorpalette_green <- c("#badec7", "#729edb" , "#5541b0")
+colorpalette_purple <- c("#E8A69B","#6A8CC8",  "#11276A")
+OGBcolors <- c("#FCAF42","#98BF68", "#3D5EB5")
+
+
+#oldpink: #FBA89D
+
+
+
+#print in high res
+ragg::agg_png("CETselection_figure_OGB.png", width = 15, height = 6.5, units = "in", res = 320, scaling=2.2)
+
+plot_optselect_presentation(optSet_all_parindex_10$rows,
+                            plot_name = "selection of 400 accessions",
+                            colorscheme = OGBcolors,
+                            bckcolor = "#F5F5F5",
+                            linesize = 0.8) 
+
+dev.off()
+
+
+ragg::agg_png("CETselection_larger_fig.png", width = 12, height = 6.5, units = "in", res = 320, scaling=2.2)
+
+plot_optselect_presentation(optSet_all_parindex_10$rows,
+                            plot_name = "selection of 400 accessions",
+                            colorscheme = OGBcolors,
+                            bckcolor = "#F5F5F5",
+                            linesize = 0.8) 
+
+dev.off()
+
+
+ragg::agg_png("allgenos_figure_OGB.png", width = 15, height = 14.5, units = "in", res = 320, scaling=2.2)
+
+plot_optselect_presentation(1:nrow(alldata.filt), 
+                            plot_name = "all 2903 accessions", 
+                            colorscheme = OGBcolors,
+                            bckcolor = "#F5F5F5",
+                            linesize = 0.8)
+dev.off()
+
+
+#ragg::agg_png("test_poster_KASP_genos.png", width = 16, height = 14, units = "in", res = 320, scaling=2.8)
+
+# plot_optselect_poster(1:nrow(alldata.filt), "", 
+#                       colorscheme= c("#FCAF42","#98BF68", "#3D5EB5" ) , 
+#                       bckcolor="#F5F5F5", 
+#                       linesize=0.5)
+  
+#dev.off()
+
+
+
+
+#ggsave("CETselection_figure.png", width= 6, height= 12, units="in")
+#ggsave("allgenos_figure.png", width= 6, height= 4, units="in")
+```
+
+
+
+
+
+
+
+
+```{r}
+
+#dominance effect only:
+#formStr <- paste0(" ~ ", paste0(colnames(xmatrix)[45:54], collapse=" + ")) #just xd_s right now
+
+### Additive effect only
+#make the formula string
+#formStr <- paste0(" ~ ", paste0(colnames(xmatrix)[35:44], collapse=" + ")) #just xa_s
+
+
+# Use AlgDesign to choose the optimal subset of candidates
+optSetXa <- optFederov(frml=formula(formStr), data=candidates, nTrials=nObsToKeep) 
+#singular with family and additive effect.
+#saveRDS(optSet, file="optSet_xa_only.RDS")
+
+
+#view selection
+plot_optselect(optSetXa$rows)
+#ggsave(filename="optSet_xa_only.png")
+
+```
+
+```{r}
+# Estimate effects
+# Look at Std. Error of regression coefficient estimates
+fitOS <- lm(formula=paste0("plant_height", formStr), data=candidates, subset=optSet$rows)
+summaryOS <- summary(fitOS)
+print(summaryOS$coefficients)
+
+
+
+#calculate total LD of optset:
+test_totalLD.rsq = function(geno.data){
+  sum(LD(geno.data[,2:11])$`R^2`, na.rm=TRUE ) 
+}
+
+#make a genotype class object for calculating LD later
+genoclass.xdsubset = makeGenotypes(data=alldata.noNA[optSet$rows,], convert = c(2:11), method=genetics::as.genotype.allele.count)
+
+
+
+test_totalLD.rsq(genoclass.xdsubset)
+
+#make a genotype class object for calculating LD later
+genoclass.xasubset = makeGenotypes(data=alldata.noNA[optSetXa$rows,], convert = c(2:11), method=genetics::as.genotype.allele.count)
+
+test_totalLD.rsq(genoclass.xasubset)
+
+```
+
+
+Look at representation at each marker:
+```{r}
+xa_selected = alldata.noNA[optSetXa$rows,]
+table(xa_selected$x1)
+table(xa_selected$x2)
+table(xa_selected$x3)
+table(xa_selected$x4)
+table(xa_selected$x5)
+table(xa_selected$x6)
+table(xa_selected$x7)
+table(xa_selected$x8)
+table(xa_selected$x9)
+table(xa_selected$x10)
+
+
+xd_selected = alldata.noNA[optSet$rows,]
+table(xd_selected$x1)
+table(xd_selected$x2)
+table(xd_selected$x3)
+table(xd_selected$x4)
+table(xd_selected$x5)
+table(xd_selected$x6)
+table(xd_selected$x7)
+table(xd_selected$x8)
+table(xd_selected$x9)
+table(xd_selected$x10)
+```
+
+Leaving out phenos from matrix:
+```{r}
+#start with alldata.filt (NAs are filtered out)
+
+#define parental rows to keep
+parentrows = which(alldata.filt$is.parent == "T")
+
+#make marker matrix
+all.cands = alldata.filt[,2:11] - 1 #(-1,0,1) coding 
+
+#make the formula string
+formStr <- paste0(" ~ ", paste0(colnames(all.cands), collapse=" + ")) #just xa_s right now
+
+
+# How many candidates you keep and put in the evaluation experiment
+nObsToKeep <- 300
+
+# Use AlgDesign to choose the optimal subset of candidates
+optSetXa_all <- optFederov(frml=formula(formStr), data=all.cands, nTrials=nObsToKeep, rows=parentrows, augment=T) #include all parents
+
+saveRDS(optSetXa_all, file="optSetXa_all.RDS")
+
+
+
+
+
+#view subset:
+#function for plotting:
+plot_optselect = function(optsubset){
+  selected = alldata.filt[optsubset,]
+  colnames(selected)[2:11] <- seq(from=1, to=10)
+  
+  #order for plot:
+  selected.sorted = selected %>%
+    mutate(SubjectID = fct_reorder(SubjectID, row_sum)) %>%
+    pivot_longer(cols=2:11, names_to="KASP") %>%
+    mutate(KASP = KASP)
+  
+  selected.sorted$value = as.factor(selected.sorted$value)
+  selected.sorted$KASP = as.numeric(selected.sorted$KASP)
+  
+  barwidth = 0.25
+  
+  #plot selection:
+  selected.sorted %>% ggplot() +
+    geom_segment(aes(x=KASP - barwidth, y=SubjectID, 
+                     xend = KASP + barwidth, yend = SubjectID, color=value), size=0.5) +
+     scale_color_manual(values=c("#FFFFFF", "#FF9900", "#0066FF", "gray")) +
+     scale_x_continuous(name="Chromosome 1 Mbp", breaks=c(unique(selected.sorted$KASP))) +
+     scale_y_discrete(name="Sample") +
+     theme_dark() +
+     theme(axis.text.y = element_blank(), axis.text.x = element_text(size=4, angle=90)) +
+    labs(color = "Glaziovii allele dosage")
+}
+
+plot_optselect(optSetXa_all$rows)
+ggsave(filename="optSetXa_all.png")
+
+
+#calculate total LD of optset:
+#make a genotype class object for calculating LD later
+genoclass_xa_all = makeGenotypes(data=alldata.filt[optSetXa_all$rows,], convert = c(2:11), method=genetics::as.genotype.allele.count)
+
+test_totalLD.rsq(genoclass_xa_all)
+
+
+
+
+
+### with Xd:
+#make marker matrix
+all.cands.Xd = (2*abs(alldata.filt[,2:11] - 1))-1 #(-1,1) coding 
+
+# Use AlgDesign to choose the optimal subset of candidates
+#make the formula string
+formStrXd <- paste0(" ~ ", paste0(colnames(all.cands.Xd), collapse=" + ")) #just xd_s right now
+
+
+# Use AlgDesign to choose the optimal subset of candidates
+optSetXd_all <- optFederov(frml=formula(formStrXd), data=all.cands.Xd, nTrials=nObsToKeep, rows=parentrows, augment=T) #include all parents
+
+saveRDS(optSetXd_all, file="optSetXd_all.RDS")
+
+plot_optselect(optSetXd_all$rows)
+ggsave(filename="optSetXd_all.png")
+
+
+
+
+
+
+#view parents only
+plot_optselect(parentrows)
+
+```
+
+More versatile plotting function:
+```{r}
+plot_optset_versatile = function(optsubset, dataframe){
+  selected = dataframe[optsubset,]
+  colnames(selected)[2:11] <- seq(from=1, to=10)
+  
+  #order for plot:
+  selected.sorted = selected %>%
+    mutate(SubjectID = fct_reorder(SubjectID, row_sum)) %>%
+    pivot_longer(cols=2:11, names_to="KASP") %>%
+    mutate(KASP = KASP)
+  
+  selected.sorted$value = as.factor(selected.sorted$value)
+  selected.sorted$KASP = as.numeric(selected.sorted$KASP)
+  
+  barwidth = 0.25
+  
+  #plot selection:
+  selected.sorted %>% ggplot() +
+    geom_segment(aes(x=KASP - barwidth, y=SubjectID, 
+                     xend = KASP + barwidth, yend = SubjectID, color=value), size=0.5) +
+     scale_color_manual(values=c("#FFFFFF", "#FF9900", "#0066FF", "gray")) +
+     scale_x_continuous(name="KASP marker", breaks=c(unique(selected.sorted$KASP))) +
+     scale_y_discrete(name="Sample") +
+     theme_dark() +
+     theme(axis.text.y = element_blank(), axis.text.x = element_text(size=4, angle=90)) +
+    labs(color = "Glaziovii allele dosage")
+}
+```
+
+
+
+
+
+1) Try with subsetting families first:
+```{r}
+#make list of families with more than 3 individual observations:
+bigfams = unique(alldata.filt$family)[table(alldata.filt$family) > 10]
+
+data_fam_filt = alldata.filt %>% 
+  filter(family %in% bigfams)
+nrow(alldata.filt) - nrow(data_fam_filt)
+#family size more than 2 removes 166 rows
+#family size more than 4 removes 353 rows
+
+#will need to add back parent rows at some point
+
+
+cands_famfilt = cbind(data_fam_filt[,2:11] - 1, family= data_fam_filt$family) 
+#(-1,0,1) coding (Xa)
+
+
+#make the formula string
+formStr_famfilt <- paste0(" ~ ", paste0(colnames(cands_famfilt), collapse=" + ")) #Xas plus family
+
+# Run optFederov
+optSetXafam_famfilt <- optFederov(frml=formula(formStr_famfilt), data=cands_famfilt, nTrials=nObsToKeep) #excluding parents currently
+
+#singular design with families of size > 2; going back to try with size 5 or greater. 
+#singular design with families of size > 4, too.
+
+#runs okay when I have families of size > 50 (there are only 13). It picks all 13 families.
+
+#runs okay when I have families of size > 25 (there are 39). It picks all 39 families.
+
+#runs okay when I have families of size > 15 (there are 50). It picks all 50 families.
+
+#singular design with families of size > 10 (there are 64).
+
+#the smallest threshold that it runs at is families of size > 14 (there are 52). It picks all 52 families.
+
+#actually... there is some randomness. saving a run with a smaller threshold, with families of size > 10 (there are 64). It picks all 64 families.
+saveRDS(optSetXafam_famfilt, file="optSetXafam_families_morethan10.RDS")
+
+
+
+
+length(unique(data_fam_filt$family))
+length(unique(optSetXafam_famfilt$design$family))
+
+
+
+plot_optselect(optSetXafam_famfilt$rows)
+```
+
+2) Try with collapsed parent values
+```{r}
+#Make columns with the possible parents as columns, and zeros or ones to indiciate which were used as the parents for the individual in that row
+
+library(reshape2)
+
+tomelt = alldata.filt[,c(1:11, 15:16, 18)]
+
+melted = as.data.frame(table(cbind.data.frame(SubjectID = tomelt$SubjectID,
+                              Parents=c(tomelt$female.parent.accession,
+                                        tomelt$male.parent.accession))))
+
+parentswide = reshape(melted, idvar = "SubjectID", timevar = "Parents", direction = "wide")
+colnames(parentswide)[2:42] = str_remove_all(colnames(parentswide)[2:42], pattern="Freq.")
+
+
+data_parentwide = merge(tomelt[,c(1:11,14)], parentswide, by="SubjectID")
+
+
+
+#make the formula string
+formStr_famwide <- paste0(" ~ ", paste0(colnames(data_parentwide[c(2:11,13:53)]), collapse=" + ")) #Xas plus parent index
+
+# Run optFederov
+optSetXafam_famwide <- optFederov(frml=formula(formStr_famwide), data=data_parentwide, nTrials=nObsToKeep)
+#singular design
+
+#try with simplified matrix:
+parentwide_matrix = data_parentwide[, c(2:11,13:53)]
+
+#make the formula string
+formStr_famwide <- paste0(" ~ ", paste0(colnames(parentwide_matrix), collapse=" + ")) #Xas plus parent index
+
+formStr_famwide_test <- paste0(" ~ ", paste0(colnames(parentwide_matrix)[1:42], collapse=" + ")) #Xas plus parent index
+
+formStr_famwide_test2 <- paste0(" ~ ", paste0(colnames(parentwide_matrix)[c(1:11,38:51)], collapse=" + ")) #Xas plus parent index
+#singular design with 15 parents included (37-51) but runs *sometimes* with 14 parents (38-51)
+
+
+# Run optFederov
+optSetXafam_famwide <- optFederov(frml=formula(formStr_famwide), data=parentwide_matrix, nTrials=nObsToKeep)
+
+#saveRDS(optSetXafam_famwide, file="optSetXafam_famwide_allparents.RDS")
+
+
+
+#runs with 35 covariates, still runs at 40. error about condition >1 starts at 36. 
+#singular design at 43 covariates.
+#runs at 42 covariates but with error about condition >1.
+
+
+#error: the condition has length > 1 and only the first element will be usedthe condition has length > 1 and only the first element will be usedthe condition has length > 1 and only the first element will be usedUsing formula(x) is deprecated when x is a character vector of length > 1. Consider formula(paste(x, collapse = " ")) instead.the condition has length > 1 and only the first element will be usedthe condition has length > 1 and only the first element will be used
+
+
+plot_optset_versatile(optSetXafam_famwide$rows, dataframe = alldata.filt)
+
+```
+
+
+3) Try with eigenvectors:
+```{r}
+raw_candidates = as.matrix(candidates[,3:22]) #matrix of additive and dominance effects
+square_cands = t(raw_candidates) %*% raw_candidates #this is X'X
+testeigen = eigen(square_cands)
+
+
+
+#eigen requires square matrix
+```
+
+
+
+
+Notes: 11/21
+
+1)If I filter out the families with only 1 individual, and try to optimize on a model with the 10 additive effects plus the family effects, I still get a singular design. If I filter out even more of the smaller families first, I can get optFederov to run with families of 10 or more individuals (this leaves 64 families out of the original 300). The selected subset always includes representation from all of the families.
+2) I tried making an incidence matrix for the parents, and using a model with parent effects instead of a family effect. First I got a singular design error when I tried to include all of the parents. I found out if I included just a subset of the parent effects in the model, sometimes it gave a singular design error and other times it ran fine. So it seems like there's an aspect of randomness that is affecting whether there is a singular design error. After trying several times, I got it to run with all of the parent effects included in the model. I attached a picture of what that optimized set looks like.
+3) I tried looking at the eigenvectors of the matrix with genotypes coded for additive and dominance effects (20). I ran eigen(X'X) -- (is this right?) -- there were 20 eigenvectors. 
+
+
+
+
+
+
+
+
+
+
+
+
+OLD CODE
+```{r, eval=FALSE}
+
+
+
+# Compare to a random subset of candidates
+rndSet <- sort(sample(x=nObs, size=nObsToKeep, replace=F))
+# Estimate effects and show they are not as good
+fitRS <- lm(formula=paste0("y", formStr), data=candidates, subset=rndSet)
+summaryRS <- summary(fitRS)
+print(summaryRS$coefficients)
+
+#we don't know true effects so can't look at correlation 
+
+
+
+
+
+
+### try with simulated phenotypes:
+
+#number of predictors (KASP markers):
+nPred <- 10
+# Error variance of the response variable
+errVar <- 4
+# How many candidates you have to choose from:
+nObs <- nrow(alldata.filt)
+# Vector of 'true' effects:
+beta <- rnorm(nPred)
+#xVals
+xVals <- as.matrix(alldata.filt[2:11])
+# Response variable
+yVal <- xVals %*% beta + rnorm(nObs, sd=sqrt(errVar))
+
+candidates <- data.frame(cbind(yVal, xVals))
+colnames(candidates)[1] <- "y"
+
+
+# Estimate effects and show they are pretty good
+# Look at Std. Error of regression coefficient estimates
+fitOS <- lm(formula=paste0("y", formStr), data=candidates, subset=optSet$rows)
+summaryOS <- summary(fitOS)
+print(summaryOS$coefficients)
+r2 <- round(cor(summaryOS$coefficients[-1, 1], beta)^2, 3)
+plot(summaryOS$coefficients[-1, 1], beta, main=paste("R^2 =", r2), xlab="Estimated beta", ylab="True beta")
+
+# Compare to a random subset of candidates
+rndSet <- sort(sample(x=nObs, size=nObsToKeep, replace=F))
+# Estimate effects and show they are not as good
+fitRS <- lm(formula=paste0("y", formStr), data=candidates, subset=rndSet)
+summaryRS <- summary(fitRS)
+print(summaryRS$coefficients)
+r2 <- round(cor(summaryRS$coefficients[-1, 1], beta[1:9])^2, 3) #10th marker estimate not converging for some reason
+plot(summaryRS$coefficients[-1, 1], beta[1:9], main=paste("R^2 =", r2), xlab="Estimated beta", ylab="True beta")
+
+
+
+
+
+
+
+
+#save
+saveRDS(alldata.filt, file="SN_genos_phenos_NAfiltered.RDS")
+saveRDS(fitOS, file="fitOS_111221_01.RDS")
+saveRDS(candidates, file="SN_NAfiltgenos_simulated_phenos.RDS")
+
+
+```
+
+
+JL's simulation:
+```{r}
+# Make dataset
+# How many candidates you have to choose from
+nObs <- 1000
+# How many candidates you keep and put in the evaluation experiment
+nObsToKeep <- 50
+# How many predictors for each candidate
+nPred <- 10
+# Error variance of the response variable
+errVar <- 4
+# Predictor matrix
+xVals <- matrix(data=rbinom(n=nObs*nPred, size=2, prob=0.5), nObs, nPred)
+# Vector of true effects
+beta <- rnorm(nPred)
+# Response variable
+yVal <- xVals %*% beta + rnorm(nObs, sd=sqrt(errVar))
+# Make the data.frame and the prediction formula
+candidates <- data.frame(cbind(yVal, xVals))
+colnames(candidates) <- c("y", paste0("x", 0:9))
+formStr <- paste0(" ~ ", paste0("x", 0:9, collapse=" + "))
+
+# Use AlgDesign to choose the optimal subset of candidates
+optSet <- optFederov(frml=formula(formStr), data=candidates, nTrials=nObsToKeep)
+# Estimate effects and show they are pretty good
+# Look at Std. Error of regression coefficient estimates
+fitOS <- lm(formula=paste0("y", formStr), data=candidates, subset=optSet$rows)
+summaryOS <- summary(fitOS)
+print(summaryOS$coefficients)
+r2 <- round(cor(summaryOS$coefficients[-1, 1], beta)^2, 3)
+plot(summaryOS$coefficients[-1, 1], beta, main=paste("R^2 =", r2), xlab="Estimated beta", ylab="True beta")
+
+# Compare to a random subset of candidates
+rndSet <- sort(sample(x=nObs, size=nObsToKeep, replace=F))
+# Estimate effects and show they are not as good
+fitRS <- lm(formula=paste0("y", formStr), data=candidates, subset=rndSet)
+summaryRS <- summary(fitRS)
+print(summaryRS$coefficients)
+r2 <- round(cor(summaryRS$coefficients[-1, 1], beta)^2, 3)
+plot(summaryRS$coefficients[-1, 1], beta, main=paste("R^2 =", r2), xlab="Estimated beta", ylab="True beta")
+```
+

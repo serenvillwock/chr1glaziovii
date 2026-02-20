@@ -1,0 +1,150 @@
+```{r}
+# ==== packages ====
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+  library(stringr)
+  library(forcats)
+  library(ggplot2)
+  library(scales)
+})
+```
+
+Read in results from each glaziovii haplotype assembly
+```{r}
+anchor_path_hap1 <- paste0("awave/anchors.hap1.gff")  
+
+dt_hap1 <- read_table(anchor_path_hap1, comment = "#", col_names = TRUE)
+
+df_hap1 <- dt_hap1 %>% mutate(
+    ref_start  = pmin(referenceStart, referenceEnd),
+    ref_end    = pmax(referenceStart, referenceEnd),
+    qry_start0 = pmin(queryStart, queryEnd),
+    qry_end0   = pmax(queryStart, queryEnd)) %>%
+  # midpoints for dot plot
+  mutate(ref_mid = (ref_start + ref_end) / 2,
+    qry_mid = (qry_start0 + qry_end0) / 2)
+
+
+anchor_path_hap2 <- paste0("awave/anchors.hap2.gff")  
+
+dt_hap2 <- read_table(anchor_path_hap2, comment = "#", col_names = TRUE)
+
+df_hap2 <- dt_hap2 %>% mutate(
+    ref_start  = pmin(referenceStart, referenceEnd),
+    ref_end    = pmax(referenceStart, referenceEnd),
+    qry_start0 = pmin(queryStart, queryEnd),
+    qry_end0   = pmax(queryStart, queryEnd)) %>%
+  # midpoints for dot plot
+  mutate(ref_mid = (ref_start + ref_end) / 2,
+    qry_mid = (qry_start0 + qry_end0) / 2)
+
+df_both = full_join(df_hap1 %>% mutate(hap="hap1"), df_hap2 %>% mutate(hap="hap2"))
+```
+
+
+```{r}
+# Plot just chromosome 1:
+df1 <- df_both %>% filter(queryChr == "1")
+
+haplabels_map <- c(hap1 = "haplotype 1",
+                   hap2 = "haplotype 2")
+
+# Esculenta x glaziovii chr 1 only:
+ggplot(df1, aes(x = ref_mid/1e6, y = qry_mid/1e6, color = strand)) +
+  geom_point(size = 0.2, alpha = 0.6) +
+  scale_color_manual(values = c("+" = "#2C7BB6", "-" = "#D7191C")) +
+  facet_wrap(~ hap, scales = "free",
+             labeller = as_labeller(haplabels_map)) +
+  ggtitle("Chromosome 1 alignments") +
+  labs(y = "Glaziovii position (Mbp)",
+    x = "Esculenta position (Mbp)",
+    color = "Strand") +
+  theme_bw(base_size = 10) +
+  theme(panel.spacing = unit(0.5, "lines"),
+    strip.background = element_rect(fill = "grey92", color = NA)) +
+  #highlight introgression region
+  annotate("rect", xmin = 27.1, xmax = 39.7, # in Mbp
+           ymin = -Inf, ymax = Inf, # span entire x range of each panel
+    fill = "dark green", alpha = 0.07)
+
+
+ggsave(paste0("Fig12_chr1_happaneled_alignment.png"), width = 8, height = 3.5, dpi = 300)
+```
+
+```{r}
+# ---- Plot 2: genome-wide dotplot with cumulative coordinates ----
+# Build chromosome sizes & offsets for both genomes, then place blocks on cumulative axes
+
+# facet_grid(rows = vars(refChr), cols = vars(queryChr), scales = "free")
+
+# helper to compute cumulative offsets in a sensible order (numeric-aware if chroms are 1..20)
+order_levels <- function(chr) {
+  # try numeric sort if they look numeric; else natural sort
+  u <- unique(chr)
+  if (all(str_detect(u, "^\\d+$"))) {
+    fct_relevel(factor(chr, levels = as.character(sort(as.integer(unique(chr))))),
+                as.character(sort(as.integer(unique(chr)))))
+  } else {
+    # natural sort like Chromosome01, Chromosome02, ...
+    lv <- u[order(stringr::str_sort(u, numeric = TRUE))]
+    factor(chr, levels = lv)
+  }
+}
+
+# reference cumulative coordinates
+ref_sizes <- df %>%
+  group_by(refChr) %>%
+  summarise(ref_len = max(ref_end, na.rm = TRUE), .groups = "drop") %>%
+  mutate(refChr = order_levels(refChr)) %>%
+  arrange(refChr) %>%
+  mutate(ref_offset = lag(cumsum(ref_len), default = 0))
+
+# query cumulative coordinates
+qry_sizes <- df %>%
+  group_by(queryChr) %>%
+  summarise(qry_len = max(qry_end0, na.rm = TRUE), .groups = "drop") %>%
+  mutate(queryChr = order_levels(queryChr)) %>%
+  arrange(queryChr) %>%
+  mutate(qry_offset = lag(cumsum(qry_len), default = 0))
+
+# join offsets, compute cumulative mids (flip minus strand so diagonals line up)
+df_cum <- df %>%
+  mutate(refChr  = order_levels(refChr),
+         queryChr = order_levels(queryChr)) %>%
+  left_join(ref_sizes,  by = "refChr") %>%
+  left_join(qry_sizes,  by = "queryChr") %>%
+  mutate(
+    ref_cum_mid = ref_offset + ref_mid,
+    # For minus-strand blocks, invert within the query chromosome so they appear as a negative-slope diagonal
+    qry_cum_mid = ifelse(strand == "-",
+                         qry_offset + (qry_len - qry_mid),
+                         qry_offset + qry_mid)
+  )
+
+# optional chromosome guides every chr boundary
+ref_guides <- ref_sizes %>%
+  transmute(x = ref_offset, label = as.character(refChr))
+qry_guides <- qry_sizes %>%
+  transmute(y = qry_offset, label = as.character(queryChr))
+
+p_cum <- ggplot(df_cum, aes(x = ref_cum_mid, y = qry_cum_mid, color = strand)) +
+  geom_point(size = 0.15, alpha = 0.5) +
+  scale_color_manual(values = c("+" = "#2C7BB6", "-" = "#D7191C")) +
+  # chromosome boundary lines (light)
+  geom_vline(data = ref_guides, aes(xintercept = x), color = "grey90", linewidth = 0.2, inherit.aes = FALSE) +
+  geom_hline(data = qry_guides, aes(yintercept = y), color = "grey90", linewidth = 0.2, inherit.aes = FALSE) +
+  labs(
+    x = "Reference (cumulative bp)",
+    y = "Query (cumulative bp)",
+    color = "Strand",
+    title = "Genome-wide dotplot (cumulative coordinates)"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(legend.position = "top")
+
+print(p_cum)
+ggsave("dotplot_genomewide.png", p_cum, width = 12, height = 8, dpi = 300)
+
+```
+

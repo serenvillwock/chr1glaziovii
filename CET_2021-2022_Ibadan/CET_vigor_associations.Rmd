@@ -1,0 +1,173 @@
+---
+title: "CET_vigor_associations"
+author: "Seren Villwock"
+date: '2022-09-06'
+output: html_document
+---
+
+
+Setup directory and load packages
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/')
+
+library(tidyverse)
+library(ggcorrplot)
+library(lme4)
+library(lmerTest)
+library(ragg)
+library(RColorBrewer)
+library(MASS)
+library(qtl)
+library(sommer)
+
+CETfolder <- "~/Desktop/Research/Glaziovii_introgression/CET_Dec2021/"
+```
+
+Read in KASP genotypes and CET vigor data
+```{r echo=F}
+#kasp genotypes
+genos <- readRDS("SNgenotypes_geno.sum.RDS") %>%
+  mutate(accession_name = gsub("_.*", "", SubjectID))
+
+#CET vigor data
+vigor_data <- read.csv("~/Desktop/Research/Glaziovii_introgression/CET_Dec2021/CET2021_stem_architecture_data_all.csv") %>%
+  filter(!is.na(stem.diameter.measurement.in.cm.month.6.COMP.0000130)) %>%
+  dplyr::select(1:6, 12:19, 22:23) %>% #rename long trait names
+  rename(Stem.Diameter.Rep1 = stem.diameter.measurement.in.cm.month.6.COMP.0000130, 
+         branch_habit = branching.habit.visual.observation.1.4.CO_334.0000140,
+         branch_levels = branching.level.counting..CO_334.0000079)
+
+#Genetic position information
+#`phenoGeno_rqtl.csv` file contains the 10 Chr. 1 KASP marker genotypes and the cM positions of the markers, taken from Ariel Chan's 2018 genetic map (uplifted from v6 to v7) and formatted according to the rQTL CSV format.
+
+genetic_pos <- read.csv("~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Genotype_data/phenoGeno_rqtl.csv", header=T)[1:2,-(1:2)]
+colnames(genetic_pos) <- gsub("X","", colnames(genetic_pos))
+  
+  
+vigor_genos <- vigor_data %>% left_join(genos, by="accession_name")
+  
+CETvigdat <- plyr::rbind.fill(genetic_pos, vigor_genos) %>% 
+  relocate(17:24, .before = 1)
+
+#saveRDS(CETvigdat, file="~/Desktop/Research/Glaziovii_introgression/CET_Dec2021/CETvigor_KASPgenotypes_geneticpos_merged.RDS")
+
+# Add Xa and Xd coding for models:
+#additive effect: -1, 0, 1 coding
+Xa <- CETvigdat %>% rowwise %>%
+  mutate_at(.vars= 9:18, function(x){x - 1} ) #move from {0,1,2} to {-1,0,1} coding
+colnames(Xa)[9:18] = c("KASP1_Xa", "KASP2_Xa", "KASP3_Xa", "KASP4_Xa", "KASP5_Xa", "KASP6_Xa" ,"KASP7_Xa", "KASP8_Xa", "KASP9_Xa", "KASP10_Xa")
+
+#dominance effect: -1 for heterozygote, 1 for homozygote
+Xd = CETvigdat %>% rowwise %>%
+  mutate_at(.vars= 9:18, function(x){1-2*abs(x - 1)} ) #Xd is 1-2*abs(xa) 
+colnames(Xd)[9:18] = c("KASP1_Xd", "KASP2_Xd", "KASP3_Xd", "KASP4_Xd", "KASP5_Xd", "KASP6_Xd" ,"KASP7_Xd", "KASP8_Xd", "KASP9_Xd", "KASP10_Xd")
+
+#Merge X matrices:
+lmdata <- CETvigdat %>% left_join(Xa) %>% left_join(Xd) 
+lmdata$SubjectID <- as.factor(lmdata$SubjectID)
+lmdata <- lmdata[-(1:8),] %>% arrange(SubjectID)
+#saveRDS(Xall, file="Geno_matrices_Xa_Xd_Xglaz.RDS")
+```
+
+Format for composite interval mapping with rQTL
+```{r}
+accession_name_order <- CETvigdat$accession_name
+CETvig_rqtl <- CETvigdat  %>% dplyr::select(1:18)
+CETvig_rqtl[1:2, 1:8] <- "" #remove NAs in the first cells to fit rqtl formatting
+
+write.csv(CETvig_rqtl, file=paste0(CETfolder,"CETvig_rqtl.csv"), row.names=F)
+
+CETvig_rqtl_read <- read.cross(format = "csv", file=paste0(CETfolder,"CETvig_rqtl.csv"),
+                               na.strings= c('NA'), genotypes = c("0","1","2"))
+#summary(CETvig_rqtl_read)
+
+#plot(CETvig_rqtl_read)
+```
+
+Prepare data to fit linear model for stem diameter, using a genomic relationship matrix.
+```{r}
+#pivot stem diameter data
+stem_data_long <- lmdata %>% dplyr::select(SubjectID, 
+                            Stem.Diameter.Rep1, Stem.Diameter.Rep2, Stem.Diameter.Rep3) %>%
+  pivot_longer(cols= c(Stem.Diameter.Rep1, Stem.Diameter.Rep2, Stem.Diameter.Rep3)) %>%
+  rename(stem_diam_rep = name, stem_diam = value) %>%
+  left_join(lmdata, by="SubjectID") %>%
+  mutate(accession_name = as.factor(accession_name)) %>%
+  arrange(SubjectID)
+  
+```
+
+
+Prepare GRM and fit linear models
+```{r}
+#DArTgenos <- read.table(paste0(CETfolder,"DosageMatrixAllChrom_RefPanelAndGSprogeny_ReadyForGP_2022Aug03Seren-1.raw.txt", header=T))
+
+rownames(DArTgenos) <- DArTgenos[,1]
+DArTgenos$SubjectID <- as.factor(gsub(".*[...]", "", DArTgenos$IID)) #extract accession name factor
+
+DArTgenos_ord <- DArTgenos %>% filter(SubjectID %in% stem_data_long$accession_name) %>%
+  arrange(SubjectID) #order by accession ID factor levels so it can match up with stem data
+saveRDS(DArTgenos_ord$SubjectID, file=paste0(CETfolder, "DArTgenos_accession_names.RDS"))
+
+
+#subset to remove chr 1
+DArTgenos_mat_loco <- DArTgenos_ord[,7320:(ncol(DArTgenos_ord) -1)]  %>% 
+ apply(2, as.numeric) 
+saveRDS(DArTgenos_mat_loco, file=paste0(CETfolder, "DArTgenos_mat_loco.RDS"))
+
+
+## for long format (not using):
+#put accessions in the same order as in lmdata
+#DArTgenos_sorted <- left_join(data.frame(SubjectID = stem_data_long[,"SubjectID"]), DArTgenos, by=c("SubjectID" = "IID"))
+#saveRDS(DArTgenos_sorted, file=paste0(CETfolder, "DArTgenos_sorted.RDS"))
+#rownames(DArTgenos_sorted) <- DArTgenos_sorted[,1]
+#write.table(rownames(DArTgenos_sorted), file=paste0(CETfolder, "DArTgenos_long_rownames"), row.names = F, col.names=F)
+#DArTgenos_mat_loco <- DArTgenos_sorted[,7319:(ncol(DArTgenos_sorted)-1)]  %>%
+#  apply(2, as.numeric)
+#saveRDS(DArTgenos_mat_loco, file=paste0(CETfolder, DArTgenos_mat_loco.RDS))
+## not using above code
+
+## Calculate the genomic relationship matrix
+source(paste0(CETfolder,"calcRelationshipMatrices.R"))
+
+# Calculate GRM as (W %*% W^T) / sum(2pq)
+# To calculate p, the function expects dosage coding to be 0, 1, 2
+# individual names in rows; snps in columns
+
+GRM_loco <- calcGenomicRelationshipMatrix(DArTgenos_mat_loco)
+rownames(GRM_loco)=levels(DArTgenos_ord$SubjectID)
+colnames(GRM_loco)=levels(DArTgenos_ord$SubjectID)
+
+saveRDS(GRM_loco, file=paste0(CETfolder, "genomicRelMat_nochr1.RDS"))
+#GRM_loco <- readRDS(file=paste0(CETfolder, "genomicRelMat_nochr1.RDS"))
+
+
+### Fit a MLM for each marker one at a time###
+kaspeff_list <- colnames(stem_data_long)[32:51]
+
+DArTgenos_names <- readRDS(file=paste0(CETfolder, "DArTgenos_accession_names.RDS"))
+stem_data_ready <- stem_data_long %>% 
+  filter(accession_name %in% DArTgenos_names) %>%
+  mutate(accession_name = droplevels(accession_name)) %>%
+  mutate(block_number = as.factor(block_number)) %>%
+  arrange(accession_name) %>%
+  filter(!is.na(stem_diam)) %>%
+  filter(stem_diam > 0)
+
+kasp_associations = data.frame()
+for(i in 1:10){
+  KASPi = kaspeff_list[c(i,i+10)]
+  
+  testi = mmer(data=stem_data_ready, 
+        as.formula(paste0("stem_diam ~ block_number + ", KASPi[1]," + ",KASPi[2])),
+               random = ~ vsr(accession_name, Gu=GRM_loco),
+               rcov = ~units)
+}
+  
+```
+
+
+
+
+
+

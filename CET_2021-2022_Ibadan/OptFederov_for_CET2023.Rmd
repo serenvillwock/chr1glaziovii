@@ -1,0 +1,36 @@
+---
+title: "OptFederov for CET replicate 2023"
+author: "Seren Villwock"
+date: '2022-09-01'
+output: html_document
+---
+
+
+Calculate how many genotypes we can have:
+400 plots
+3 plots per genotype
+3 checks with 10 plots each
+5 stands per plot
+
+```{r}
+(400 - (3*10))/3
+```
+
+123 genotypes if replicated in 3 plots each.
+
+Read in genotypes
+```{r, echo=F}
+library(tidyverse)
+library(AlgDesign)
+library(genetics)
+library(reshape2)
+library(RColorBrewer)
+library(vcfR)
+```
+Read in CET genotypes vcf
+```{r}
+read.vcfR("~/Desktop/Research/Glaziovii_introgression/CET_Dec2021/AlphaAssign/GlazParentsGenotypes.vcf")
+```
+
+
+

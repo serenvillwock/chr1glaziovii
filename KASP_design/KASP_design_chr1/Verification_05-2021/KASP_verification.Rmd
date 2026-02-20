@@ -1,0 +1,671 @@
+---
+title: "KASP verification"
+author: "Seren Villwock"
+date: "6/25/2021"
+output: html_document
+---
+
+Note to self: can skip the data cleaning steps and run the last chunk with saved RDSs. scroll to the bottom
+
+
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(reshape2)
+library(plyr)
+
+setwd("/Users/serenwork/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/")
+
+rawdat = read.csv("Genotyping-014.038-01_reclustering.csv")
+
+snps = unique(rawdat$SNPID)
+
+rawdat$parent = str_replace(rawdat$SubjectID, pattern="_A.*", "")
+
+parents = unique(rawdat$parent)
+#write.csv(parents, file="sampleIDs.csv")
+
+#Read in glaz dosage information:
+#glazdosage = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/glaz.genos.melt.rds")[,c(1,2,4,5,9,10)]
+
+exp.glaz = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/visual_expected_glazdose.csv")
+
+
+#Match sample names:
+glazdosage = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/glaz.genos.melt.rds")[,c(1,2,4,5,9,10)]
+
+sample.name.key = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/sample.name.key")
+sample.name.key = as.data.frame(unnest(sample.name.key, glazdosage.samples))
+sample.name.key$sampleID = sample.name.key$glazdosage.samples
+```
+
+
+Shortcut: load saved RDS
+```{r}
+#####################################
+#INDEPENDENTLY RUN_ABLE BELOW:
+#####################################
+
+intk.report = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/Intertek_verification_report.csv")
+kasp.snps = intk.report[,2]
+
+IDM.exp.glazfac = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/IDM.exp.glazfac.aggregated.rds")
+
+clusters = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/cluster.boundaries.rds")
+
+parent.clusters = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.rds")
+```
+
+
+
+Notes on KASP "28103607" unexpected samples:
+- TMS13F1304P0003: expected heterozygous proximal and homozygous distal. Observed clustering the opposite way (heterozygous distal and homozygous proximal)
+- TMS15F1474P0007: this is the only KASP that was unexpected for this sample, and it is at the recombination border so possibly this is a rounding/inaccuracy issue
+- the others that are labeled are a labeling issue not an inaccuracy issue
+
+
+
+Read in v6 to v7 key for uplifting:
+```{r}
+#intertek.sub = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Intertek_submission.csv") #old file - one of the SNP names is wrong (KASP couldn't be made)
+intk.report = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/Intertek_verification_report.csv")
+
+kasp.snps = intk.report[,2]
+
+
+#IDM uplift key:
+upliftkey = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/IDMlist_all_uplifted_v7.csv", header=F) %>% separate(col=V1, sep="_", into=c("S1","v6_pos"))
+colnames(upliftkey)[4] <- "v7_pos"
+
+
+#uplift via sorting method to find 2 nearest SNPs:
+kasp.snp.ranges = data.frame("kasp"=kasp.snps, "begin"=kasp.snps-40000, "end"=kasp.snps+40000)
+uplift.kasp = data.frame()
+
+for(i in 1:nrow(kasp.snp.ranges)){
+  kasp = kasp.snp.ranges$kasp[i]
+  thisupliftkey = upliftkey
+  thisupliftkey$distance = thisupliftkey$v7_pos - kasp
+  thisupliftkey$kasp <- kasp
+  tmp.order = thisupliftkey[order(abs(thisupliftkey$distance)),]
+  if(tmp.order$distance[1] == 0){print(paste0("kasp snp ",i," found directly"))}
+  tmp.order.neg = tmp.order[tmp.order$distance < 0,][1,]
+  tmp.order.pos = tmp.order[tmp.order$distance > 0,][1,]
+  tmp.order.hit = tmp.order[tmp.order$distance == 0,][1,]
+  uplift.kasp = rbind(uplift.kasp, tmp.order.neg, tmp.order.pos, tmp.order.hit)
+}
+
+uplift.kasp = uplift.kasp[complete.cases(uplift.kasp), ] #remove NAs for which there was no direct kasp hit
+```
+
+
+Find expected mean glaziovii dosage around KASP snps:
+```{r}
+exp.kasp.glaz.dose <- data.frame()
+for(i in 1:length(kasp.snps)){
+  kasp.i = kasp.snps[i]
+  key.i = uplift.kasp[uplift.kasp$kasp == kasp.i,]
+  key.i$v6_pos = as.numeric(key.i$v6_pos)
+  glazdos.i = glazdosage[(glazdosage$v6_pos > (key.i$v6_pos[1] - 20000)) & (glazdosage$v6_pos < ( key.i$v6_pos[2] + 20000)) ,]
+
+  uplift.glazdos.i = join(glazdos.i, upliftkey, by="v6_pos", type="left")
+  uplift.glazdos.i$kasp = kasp.i
+  
+  ag.glazdos.i = aggregate(uplift.glazdos.i$dosvalue, by=list(sampleID=uplift.glazdos.i$sampleID, kasp=uplift.glazdos.i$kasp), FUN=mean, na.rm=TRUE)
+  colnames(ag.glazdos.i) <- c("sampleID", "kasp", "mean.glazdose")
+
+  if(nrow(ag.glazdos.i)== 0){print(paste0("error at kasp ",i))} else{
+    exp.kasp.glaz.dose = rbind(exp.kasp.glaz.dose, ag.glazdos.i)
+    print(paste0("finished kasp ",i ))
+  }
+}
+
+#saveRDS(exp.kasp.glaz.dose, file="~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/expected.glaz.dose.around.kasp.uplifted.rds")
+```
+
+
+Match genotyped parent names to glaziovii dosage names:
+```{r}
+exp.kasp.glaz.dose = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/expected.glaz.dose.around.kasp.uplifted.rds")
+
+sample.name.key = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/sample.name.key")
+sample.name.key = as.data.frame(unnest(sample.name.key, glazdosage.samples))
+sample.name.key$sampleID = sample.name.key$glazdosage.samples
+
+
+#exp.kasp.glaz.dose.keyed = join(exp.kasp.glaz.dose, as.data.frame(sample.name.key), by="sampleID", type="left")
+
+exp.kasp.glaz.dose$parent.name=NA
+for(i in 1:nrow(sample.name.key)){
+  exp.kasp.glaz.dose$parent.name[grep(sample.name.key[i,4], exp.kasp.glaz.dose$sampleID)] = as.character( sample.name.key[i,1][[1]] )
+}
+
+saveRDS(exp.kasp.glaz.dose, file = "~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/expected.glaz.dose.around.kasp.uplifted.keyed.rds")
+
+exp.kasp.glaz.dose.parents = exp.kasp.glaz.dose[complete.cases(exp.kasp.glaz.dose),]
+
+exp.kasp.glaz.dose.ag = aggregate(exp.kasp.glaz.dose.parents$mean.glazdose, by=list(parent=exp.kasp.glaz.dose.parents$parent.name, kasp=exp.kasp.glaz.dose.parents$kasp), FUN=mean, na.rm=TRUE)
+
+colnames(exp.kasp.glaz.dose.ag)[3] = "mean.glazdose"
+
+saveRDS(exp.kasp.glaz.dose.ag, file = "~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/expected.glaz.dose.around.kasp.uplifted.keyed.parent-aggregated.rds")
+```
+
+
+
+```{r}
+exp.kasp.glaz.dose.ag = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/expected.glaz.dose.around.kasp.uplifted.keyed.parent-aggregated.rds")
+
+#match SNPID to kasp SNP position, join the expected glaz dose dataframe with the rawdata dataframe
+intk.report = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/Intertek_verification_report.csv")
+colnames(intk.report)[1]="SNPID"
+
+rawdat2 = join(rawdat, intk.report[,1:2], by="SNPID", type="left")
+rawdat2$kasp = rawdat2$Customer.SNP.ID 
+kasp.rslts.exp.glaz = join(rawdat2, exp.kasp.glaz.dose.ag, by=c("parent","kasp"), type="left")
+
+
+#old nearbyIDM method: use other method below.
+#for(i in 1:38) {
+#  kasp.rslts.sub = subset(kasp.rslts.exp.glaz, kasp == kasp.snps[i])
+#  snpid = kasp.snps[i]
+  
+#  plot = ggplot(data=kasp.rslts.sub, aes(x=X, y=Y)) +
+#    geom_point(aes(color=as.factor(mean.glazdose))) +
+#    ggtitle(snpid)
+  
+#  filename = paste0("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/cluster_plots_nearbyIDM_method/", snpid,".jpg")
+  
+#  ggsave(plot=plot, filename=filename)
+  
+#  print(plot)
+#}
+```
+
+Define clusters:
+```{r}
+# define clusters:
+clusters = data.frame("kasps" = kasp.snps, "X.cut"=NA, "Y.cut"=NA)
+clusters[1,2:3] = c(3,0.75)
+clusters[2,2:3] = c(2.5,0.5)
+clusters[3,2:3] = c(2.5,0.5)
+clusters[4,2:3] = c(1.5,0.3)
+clusters[5,2:3] = c(1.3,0.5)
+clusters[6,2:3] = c(2.5,0.6)
+clusters[7,2:3] = c(2.5,0.45)
+clusters[8,2:3] = c(1.75,0.3)
+clusters[9,2:3] = c(2.5,0.6)
+clusters[10,2:3] = c(2.7,0.6)
+clusters[11,2:3] = c(2.5,0.6)
+clusters[12,2:3] = c(2.7,0.375)
+clusters[13,2:3] = c(0,0)
+clusters[14,2:3] = c(2.5,0.5)
+clusters[15,2:3] = c(2.5,0.375)
+clusters[16,2:3] = c(2.5,0.5)
+clusters[17,2:3] = c(1.8,0.9)
+clusters[18,2:3] = c(2,0.45)
+clusters[19,2:3] = c(2.5,0.6)
+clusters[20,2:3] = c(3,0.75)
+clusters[21,2:3] = c(1.75,0.9)
+clusters[22,2:3] = c(2,0.28)
+clusters[23,2:3] = c(2.6,0.45)
+clusters[24,2:3] = c(2.5,0.5)
+clusters[25,2:3] = c(3,0.75)
+clusters[26,2:3] = c(1.5,0.5)
+clusters[27,2:3] = c(2.1,0.375)
+clusters[28,2:3] = c(2.5,0.5)
+clusters[29,2:3] = c(2.5,0.375)
+clusters[30,2:3] = c(2.5,0.5)
+clusters[31,2:3] = c(1.5,0.3)
+clusters[32,2:3] = c(3,0.5)
+clusters[33,2:3] = c(1.75,1)
+clusters[34,2:3] = c(3,0.5)
+clusters[35,2:3] = c(2.4,0.45)
+clusters[36,2:3] = c(2,0.5)
+clusters[37,2:3] = c(2,0.5)
+clusters[38,2:3] = c(2.5,0.75)
+
+saveRDS(clusters, file="~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/cluster.boundaries.rds")
+```
+
+
+
+With IDM window method of expected glaz dose:
+```{r}
+DoseGlaz.atkasps = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/expected.DoseGlaz.at.kasps.rds") #created in introgression_status_UB_parents.Rmd
+
+
+DoseGlaz.atkasps$parent=NA
+for(i in 1:nrow(sample.name.key)){
+  DoseGlaz.atkasps$parent[grep(sample.name.key[i,2], DoseGlaz.atkasps$accession)] = as.character( sample.name.key[i,1][[1]] )
+}
+
+
+#subset for parents in both sets
+rawdat2.subset = subset(rawdat2, parent %in% sample.name.key$parents)
+DoseGlaz.atkasps.subset = subset(DoseGlaz.atkasps, parent %in% sample.name.key$parents)
+
+#drop mislabeled TMEB419
+DoseGlaz.atkasps.subset.fixed = subset(DoseGlaz.atkasps.subset, 
+        accession!="NR.NG.C2a.Cass.CET.0007_D11...TMEB419" & 
+          accession!="NR.NG.C2a.Cass.CET.0008_H10...TMEB419" &
+            accession!="NR.NG.C2a.Cass.CET.0008_G01...TMEB419" &
+              accession!="NR.NG.C2a.Cass.CET.0007_A02...TMEB419" &
+                accession!="TMEB419_A18639" )
+
+#join glaz dose expectations with kasp genotype data
+DoseGlaz.atkasps.subset.fixed.ag = aggregate(mean.glazdose ~ kasp + parent, FUN=median, data=DoseGlaz.atkasps.subset.fixed)
+
+
+IDM.exp.glaz = join(DoseGlaz.atkasps.subset.fixed.ag, rawdat2.subset, by=c("parent","kasp"), type="left")
+
+
+
+
+
+IDM.exp.glaz$glaz.fac = NA
+
+IDM.exp.glazfac = IDM.exp.glaz %>%
+  mutate(glaz.fac = case_when(
+    mean.glazdose < 0.2 ~ "0",
+    mean.glazdose >= 0.4 &  mean.glazdose < 1.5 ~ "1",
+    mean.glazdose >= 1.5 ~ "2",
+    ))
+
+
+saveRDS(IDM.exp.glazfac, file="~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/IDM.exp.glazfac.aggregated.rds")
+
+
+
+#####################################
+#INDEPENDENTLY RUN_ABLE BELOW:
+#####################################
+
+intk.report = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/Intertek_verification_report.csv")
+kasp.snps = intk.report[,2]
+
+IDM.exp.glazfac = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/IDM.exp.glazfac.aggregated.rds")
+
+clusters = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/cluster.boundaries.rds")
+
+parent.clusters = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.rds")
+
+```
+
+
+Make list of unexpected parents and clusters:
+```{r}
+parent.clusters = data.frame()
+
+for(i in 1:38){
+  snpid = kasp.snps[i]
+  kasp.rslts.sub = subset(IDM.exp.glazfac, kasp == kasp.snps[i]) 
+  unexpected = "FALSE" #default
+  
+  for(j in 1:(length(kasp.rslts.sub$parent))){
+    kasp.rslts.parent.i = kasp.rslts.sub[j,]
+    parent = kasp.rslts.parent.i$parent
+    X = kasp.rslts.parent.i$X
+    Y = kasp.rslts.parent.i$Y
+    mean.glazdose = kasp.rslts.parent.i$mean.glazdose
+    glaz.fac = kasp.rslts.parent.i$glaz.fac
+    
+    if(Y<clusters[i,"Y.cut"] & X>clusters[i,"X.cut"]){ cluster.i = 0 } 
+    else if(Y>=clusters[i,"Y.cut"] & X<=clusters[i,"X.cut"]){ cluster.i = 1 } 
+    else {cluster.i = "NA"}
+    if(mean.glazdose == 2) { cluster.i = 2 }
+    
+  if(cluster.i == 0 & mean.glazdose > 0.6) {unexpected = "TRUE"}         
+    #if in lower cluster but with high glaz dose
+    else if(cluster.i == 1 & mean.glazdose < 0.1) {unexpected = "TRUE"}
+    #if in upper cluster but with low glaz dose
+    else{unexpected = "FALSE"}
+    
+    
+    toadd = c(snpid, kasp.rslts.sub[j,"parent"], cluster.i, unexpected, 
+              X, Y, mean.glazdose, glaz.fac)
+    parent.clusters = rbind(parent.clusters, toadd)
+    
+    }
+}
+
+colnames(parent.clusters) = c("kasp", "parent", "cluster", "unexpected", "X", "Y", "mean.glazdose", "glaz.fac")
+parent.clusters$unexpected = as.logical(parent.clusters$unexpected)
+
+#saveRDS(parent.clusters, file = "~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.rds")
+
+
+################################
+
+parent.clusters = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.rds")
+
+#Summarize number per cluster and number unexpected per kasp:
+
+for(i in 1:38){
+  snpid = kasp.snps[i]
+  pclusters.kasp_i = parent.clusters[parent.clusters$kasp == snpid,]
+  
+  unexpec = pclusters.kasp_i[pclusters.kasp_i$unexpected == T,]
+  print( c(snpid, table(pclusters.kasp_i$cluster), length(unique(unexpec$parent)) ))
+}
+```
+
+*************************************************
+Final Plots - IDM window method with labels for clones that fall into a different cluster than expected:
+*************************************************
+```{r}
+parent.clusters$X = as.numeric(parent.clusters$X)
+parent.clusters$Y = as.numeric(parent.clusters$Y)
+
+for(i in 1:38) {
+  kasp.rslts.sub = subset(parent.clusters, kasp == kasp.snps[i])
+  snpid = kasp.snps[i]
+  
+  plot = ggplot(data=kasp.rslts.sub, aes(x=X, y=Y)) +
+    geom_point(aes(color=glaz.fac), alpha=0.5) +
+    ggtitle(snpid) +
+    geom_text(aes(label=ifelse(cluster==0 & glaz.fac ==1 , 
+                      #label if in lower cluster but with high glaz dose
+                               as.character(parent),'')),hjust=1,vjust=0) +
+    geom_text(aes(label=ifelse(cluster==1 & glaz.fac ==0 ,
+                      #label if in higher cluster but with low glaz dose
+                               as.character(parent),'')),hjust=-0.2,vjust=0)
+  
+  filename = paste0("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/cluster_plots_windows_method/", snpid,".jpg")
+  
+  #ggsave(plot=plot, filename=filename, width=7, height=7, units="in")
+  print(plot)
+}
+
+```
+
+
+*************************************************
+Clean Plots - for presentation with potentially mislabeled clones removed:
+*************************************************
+```{r}
+clean.data = subset(parent.clusters, parent != "IBA000070" & parent != "TMS13F1304P0003" & parent != "TMS14F1306P0015")
+
+
+clean.data$X = as.numeric(clean.data$X)
+clean.data$Y = as.numeric(clean.data$Y)
+
+for(i in 1:38) {
+  kasp.rslts.sub = subset(clean.data, kasp == kasp.snps[i])
+  snpid = kasp.snps[i]
+  
+  plot = ggplot(data=kasp.rslts.sub, aes(x=X, y=Y)) +
+    geom_point(aes(color=glaz.fac), alpha=0.75, size=1.5) +
+    ggtitle(snpid) +
+    geom_text(aes(label=ifelse(cluster==0 & glaz.fac ==1 , 
+                      #label if in lower cluster but with high glaz dose
+                               as.character(parent),'')),hjust=1,vjust=0) +
+    geom_text(aes(label=ifelse(cluster==1 & glaz.fac ==0 ,
+                      #label if in higher cluster but with low glaz dose
+                               as.character(parent),'')),hjust=-0.2,vjust=0) +
+    scale_color_manual(values = c("0" = "gray36", "1" = "orange", "2" = "blue"))
+  
+  filename = paste0("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/cluster_plots_windows_method/cleaned", snpid,".jpg")
+  
+  ggsave(plot=plot, filename=filename, width=6, height=5, units="in")
+  print(plot)
+}
+
+```
+
+
+
+
+*************************************************
+Look at which cluster the parents were in: introgression status by KASP markers --
+*************************************************
+```{r}
+kasp.list = read.csv("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/Intertek_verification_report.csv")[,2]
+
+kasp.selection = kasp.list[c(1,3,6,12,16,20,30,32,36,38)]
+
+intk.report.selected = subset(intk.report, intk.report$Customer.SNP.ID %in% kasp.selection)
+write.csv(intk.report.selected, file="~/Desktop/Research/Glaziovii_introgression/KASP_design/selected.10.KASPs.csv")
+
+parent.clusters = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.rds")
+
+
+parent.clusters.10kasp = subset(parent.clusters, kasp %in% kasp.selection)
+totalglaz = aggregate(as.numeric(mean.glazdose) ~ parent, FUN=mean, data=parent.clusters.10kasp)
+colnames(totalglaz) = c("parent","totalglz")
+
+parent.clusters.10kasp.tosort = left_join(parent.clusters.10kasp, totalglaz, by="parent")
+parent.clusters.10kasp.sorted = parent.clusters.10kasp.tosort[order(parent.clusters.10kasp.tosort$totalglz),]
+
+saveRDS(parent.clusters.10kasp.sorted, file="~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/parent.clusters.10kasp.RDS")
+
+tiff("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/UBparents_intro_status_by_KASP_selected10", units="px", width=2500, height=1600, res=300)
+
+ggplot(data = parent.clusters.10kasp.sorted) +
+  geom_point(aes(x=as.numeric(kasp), y=parent, color=cluster)) +
+  scale_color_manual(values=c("#FFFFFF", "#FF9900", "#0066FF", "gray95", "#FFCC66")) +
+    scale_x_continuous(name="Chromosome 1 Mbp")
+
+dev.off()
+
+```
+
+Check which parents are missing:
+```{r}
+layout = read.csv("~/Desktop/Research/Glaziovii_introgression/IITA_data_collection_seedling_nursery_2021/Nursery_layouts_barcodes/Seren_SN/Layouts/21.GS.C6.SN.Student2.IB_layout_old.csv")
+
+cross.parents = read.table("~/Desktop/Research/Glaziovii_introgression/unique_parents_list.txt")[,1]
+
+sum(cross.parents %in% parents) #how many parents are in the samples
+
+families = unique(str_extract(layout$accession_name, "F[0-9]+"))
+length(families)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Creation of glazdosage: glaz.genos.melt.rds:
+Create dataframe with glaziovii dosage information (output saved as an RDS)
+Don't need to rerun: this takes a while
+```{r, eval=FALSE}
+DosageMatrix <- readRDS("~/Desktop/Research/Glaziovii_introgression/Ubiaja_Trials/DosageMatrix_RefPanelAndGSprogeny_ReadyForGP_73019.rds")
+#subset for Chr 1
+DosMat1 <- DosageMatrix[,1:8307]
+
+
+##Subset dosage matrix for samples:
+
+#change name formatting so it is compatible with dosage matrix formatting
+compat.parents = parents %>% 
+  str_replace(pattern="IITA-TMS-IBA", "") %>% 
+  str_replace(pattern="IITA-TMS-MM", "MM") %>% 
+  str_replace(pattern="NR13", "Ug13")  %>% 
+  str_replace(pattern="IITA-TMS-ZAR", "") 
+compat.parents[87]="empty"
+
+og.parent.list = read.table("/Users/serenwork/Desktop/Research/Glaziovii_introgression/clones_to_sample.txt")[,1]
+
+
+#Find name matches and generate sample name key:
+sample.name.key = data.frame(parents, compat.parents)
+
+matchstore <- NA
+mismatch <- NA
+for (i in 1:length(compat.parents)) {
+  maybematch <- grep(compat.parents[i], rownames(DosMat1))
+if(length(maybematch) == 0){
+  mismatch[i] <- compat.parents[i]
+  sample.name.key[i,3] <- "mismatch"
+  } else {
+  matchstore[i] <- compat.parents[i]
+  sample.name.key$glazdosage.samples[i] <- list(rownames(DosMat1)[maybematch]) #each glazdosage.samples entry contains a list of multiple names
+  }
+}
+
+saveRDS(sample.name.key, file="~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/sample.name.key.RDS")
+
+#note: mismatch contains some samples which were not part of the original parents list 
+#(they were extra samples thrown in I guess)
+#will need to filter these out when looking at results
+
+#subset for samples
+UBDosMat.names <- grep(paste(compat.parents, collapse="|"), rownames(DosMat1), value=TRUE)
+UBDosMat <- subset(DosMat1, rownames(DosMat1) %in% UBDosMat.names)
+
+
+## Subset dosage matrix for IDMs:
+
+allIDMs <- read.csv("~/Desktop/Research/IDM_list.csv")
+strictIDMs <- subset(allIDMs, IDMtype == "Strict")
+strictIDMs1 <- subset(strictIDMs, Chr == 1)
+
+strictIDMs1region <- subset(strictIDMs1, Pos > 20000000)
+
+IDMposlist <- as.vector(strictIDMs1$Pos)
+IDMcolslist2 <- grep(paste(IDMposlist,collapse="|"), colnames(UBDosMat), value=TRUE)
+
+UBDosdf <- data.frame(UBDosMat)
+UBDosIDMs <- UBDosdf %>% select(any_of(IDMcolslist2))
+
+#shorten name
+glaz.genos <- UBDosIDMs
+
+#subset IDM list:
+IDMset <- strictIDMs1
+IDMset <- IDMset %>% select(SNP, Pos, GlazAllele, AltAllele)
+
+# Generate new columns that contain IDM SNP position, allele, dosage. 
+genosmelt <- melt(as.matrix(glaz.genos))
+
+
+#note: separate() takes too long to run
+genosmelt$Pos <-  str_replace(genosmelt$Var2, pattern="S1_", "") %>% str_replace(pattern="_.*", "")
+genosmelt$allele <-  str_replace(head(genosmelt$Var2), pattern="S1_", "") %>% str_replace(pattern=".*_", "")
+
+glaz.genos.melt <- join(genosmelt, IDMset, by = "Pos", type="left")
+
+colnames(glaz.genos.melt) = c("sampleID", "SNP", "dosage", "v6_pos", "Allele", "IDM","GlazAllele","AltAllele")
+
+
+# Add a Status column defining whether the listed allele is Glaz or Esc
+glaz.genos.melt <- glaz.genos.melt %>%
+  mutate(Status = ifelse(glaz.genos.melt$Allele == glaz.genos.melt$GlazAllele, "Glaz", "Esc"))
+glaz.genos.melt$Status <- as.factor(glaz.genos.melt$Status)
+
+
+# Make a new dosage column with dosage of Glaz alleles
+glaz.genos.melt$dosvalue = NA
+glaz.genos.melt <- glaz.genos.melt %>%
+  mutate(dosvalue = ifelse(glaz.genos.melt$Status == "Glaz", glaz.genos.melt$dosage,
+        ifelse(glaz.genos.melt$Status == "Esc" & glaz.genos.melt$dosage == 0,2, 
+      ifelse(glaz.genos.melt$Status == "Esc" & glaz.genos.melt$dosage == 2, 0,               
+             ifelse(glaz.genos.melt$Status == "Esc" & glaz.genos.melt$dosage == 1, 1, NA)))))
+
+saveRDS(glaz.genos.melt, file = "~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/glaz.genos.melt.rds")
+
+```
+
+```{r}
+#Match sample names:
+glazdosage = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/glaz.genos.melt.rds")[,c(1,2,4,5,9,10)]
+
+sample.name.key = readRDS("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/sample.name.key")
+sample.name.key = as.data.frame(unnest(sample.name.key, glazdosage.samples))
+sample.name.key$sampleID = sample.name.key$glazdosage.samples
+
+
+exp.kasp.glaz.dose.keyed = join(exp.kasp.glaz.dose, as.data.frame(sample.name.key), by="sampleID", type="left")
+
+exp.kasp.glaz.dose$parent.name=NA
+for(i in 1:nrow(sample.name.key)){
+  exp.kasp.glaz.dose$parent.name[grep(sample.name.key[i,4], exp.kasp.glaz.dose$sampleID)] = sample.name.key[i,1]
+}
+
+#saveRDS(, file = "")
+
+```
+
+
+
+
+
+
+
+
+
+
+OLD CODE
+Old method of uplifting:
+```{r, eval=FALSE}
+#uplift KASP snps in ranges:
+kasp.snp.ranges = data.frame("kasp"=kasp.snps, "begin"=kasp.snps-40000, "end"=kasp.snps+40000)
+uplift.kasp = data.frame()
+
+for(i in 1:nrow(kasp.snp.ranges)){
+  tmp.sub = subset(upliftkey, v7_pos > kasp.snp.ranges$begin[i] & v7_pos < kasp.snp.ranges$end[i])
+  if(nrow(tmp.sub) == 0){print(paste0("none in range for kasp snp ",i))}
+  tmp.sub$kasp <- kasp.snp.ranges$kasp[i]
+  
+  closest.uplift = tmp.sub[which.min(abs(tmp.sub$v7_pos - kasp.snp.ranges$kasp[i])),]
+  uplift.kasp = rbind(uplift.kasp, closest.uplift)
+}
+
+```
+OLD:
+
+Visual expected glaziovii dosage method (reading figure with uplifted kasp snp positions):
+
+```{r, eval=FALSE}
+rawdat$Intertek.SNP.ID = rawdat$SNPID
+kasp.list = unique(exp.glaz$Customer.SNP.ID)
+ 
+exp.glaz = exp.glaz %>%
+  mutate(glaz.fac = case_when(
+    vis.exp.glaz.dose < 0.5 ~ "0",
+    vis.exp.glaz.dose >= 0.5 & vis.exp.glaz.dose < 1.5 ~ "1",
+    vis.exp.glaz.dose >= 1.5 ~ "2",
+    ))
+
+data.exp.glaz = join(rawdat, exp.glaz, by=c("parent","Intertek.SNP.ID"), type="left")
+
+for(i in 1:38) {
+  kasp.rslts.sub = subset(data.exp.glaz, Customer.SNP.ID == kasp.list[i])
+  snpid = kasp.list[i]
+  
+  plot = ggplot(data=kasp.rslts.sub, aes(x=X, y=Y)) +
+    geom_point(aes(color=glaz.fac)) +
+    ggtitle(snpid) +
+    geom_text(aes(label=ifelse(Y<0.4 & vis.exp.glaz.dose >= 0.5,
+                               as.character(parent),'')),hjust=1,vjust=0) +
+    geom_text(aes(label=ifelse(Y>0.6 & vis.exp.glaz.dose <= 0.5,
+                               as.character(parent),'')),hjust=-0.5,vjust=0)
+  
+  filename = paste0("~/Desktop/Research/Glaziovii_introgression/KASP_design/Verification_05-2021/cluster_plots_visual_method/", snpid,".jpg")
+  
+  ggsave(plot=plot, filename=filename)
+  print(plot)
+}
+
+
+```
+
+
+
+
+
+
+
+
